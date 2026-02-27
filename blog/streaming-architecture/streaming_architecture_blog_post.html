@@ -1,0 +1,1490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Streaming 20TB to 160 GPUs — A Production Architecture for Vision-Language Model Training</title>
+<link href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Source+Code+Pro:wght@400;500;600&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --text-primary: #1a1a1a;
+    --text-secondary: #555;
+    --text-muted: #888;
+    --accent: #1a8917;
+    --accent-light: #e6f4e6;
+    --bg: #fff;
+    --bg-code: #f6f8fa;
+    --bg-diagram: #fafbfc;
+    --border: #e6e6e6;
+    --border-light: #f0f0f0;
+    --shadow-soft: 0 2px 12px rgba(0,0,0,0.06);
+    --shadow-diagram: 0 1px 8px rgba(0,0,0,0.08);
+  }
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Lora', Georgia, serif;
+    color: var(--text-primary);
+    background: var(--bg);
+    line-height: 1.78;
+    font-size: 18px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .article-container {
+    max-width: 728px;
+    margin: 0 auto;
+    padding: 60px 24px 120px;
+  }
+
+  /* Header */
+  .article-meta {
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    color: var(--text-muted);
+    margin-bottom: 16px;
+    letter-spacing: 0.02em;
+  }
+
+  .article-meta .tag {
+    display: inline-block;
+    background: var(--accent-light);
+    color: var(--accent);
+    padding: 3px 10px;
+    border-radius: 100px;
+    font-weight: 600;
+    font-size: 12px;
+    margin-right: 12px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+
+  h1 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 40px;
+    font-weight: 700;
+    line-height: 1.2;
+    margin-bottom: 16px;
+    letter-spacing: -0.02em;
+    color: var(--text-primary);
+  }
+
+  .subtitle {
+    font-size: 21px;
+    color: var(--text-secondary);
+    line-height: 1.5;
+    margin-bottom: 32px;
+    font-weight: 400;
+  }
+
+  .author-row {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    padding-bottom: 32px;
+    border-bottom: 1px solid var(--border-light);
+    margin-bottom: 40px;
+  }
+
+  .author-avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, #667eea, #764ba2);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    color: #fff;
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
+    font-size: 16px;
+  }
+
+  .author-info {
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+  }
+
+  .author-name {
+    font-weight: 600;
+    color: var(--text-primary);
+  }
+
+  .author-date {
+    color: var(--text-muted);
+    font-size: 13px;
+  }
+
+  /* Body text */
+  p {
+    margin-bottom: 24px;
+  }
+
+  h2 {
+    font-family: 'Lora', Georgia, serif;
+    font-size: 28px;
+    font-weight: 700;
+    margin-top: 56px;
+    margin-bottom: 20px;
+    letter-spacing: -0.01em;
+  }
+
+  h3 {
+    font-family: 'Inter', sans-serif;
+    font-size: 18px;
+    font-weight: 700;
+    margin-top: 40px;
+    margin-bottom: 14px;
+    color: var(--text-primary);
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    font-size: 13px;
+  }
+
+  strong { font-weight: 600; }
+  em { font-style: italic; }
+
+  /* Code */
+  code {
+    font-family: 'Source Code Pro', monospace;
+    font-size: 15px;
+    background: var(--bg-code);
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #d63384;
+  }
+
+  pre {
+    background: #1e1e2e;
+    color: #cdd6f4;
+    padding: 24px 28px;
+    border-radius: 10px;
+    overflow-x: auto;
+    margin: 28px 0;
+    font-family: 'Source Code Pro', monospace;
+    font-size: 14px;
+    line-height: 1.7;
+    box-shadow: var(--shadow-soft);
+  }
+
+  pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+    font-size: inherit;
+  }
+
+  .code-comment { color: #6c7086; font-style: italic; }
+  .code-keyword { color: #cba6f7; }
+  .code-string { color: #a6e3a1; }
+  .code-number { color: #fab387; }
+  .code-function { color: #89b4fa; }
+
+  /* Callout boxes */
+  .callout {
+    background: #f8f9fa;
+    border-left: 4px solid var(--accent);
+    padding: 20px 24px;
+    margin: 32px 0;
+    border-radius: 0 8px 8px 0;
+    font-size: 16px;
+    line-height: 1.7;
+  }
+
+  .callout.warning {
+    border-left-color: #e67700;
+    background: #fff9f0;
+  }
+
+  .callout-title {
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    margin-bottom: 8px;
+    color: var(--accent);
+  }
+
+  .callout.warning .callout-title {
+    color: #e67700;
+  }
+
+  /* Diagrams */
+  .diagram-container {
+    margin: 36px -40px;
+    padding: 32px 24px;
+    background: var(--bg-diagram);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    box-shadow: var(--shadow-diagram);
+    overflow-x: auto;
+  }
+
+  @media (max-width: 800px) {
+    .diagram-container { margin: 36px 0; }
+  }
+
+  .diagram-caption {
+    font-family: 'Inter', sans-serif;
+    font-size: 13px;
+    color: var(--text-muted);
+    text-align: center;
+    margin-top: 16px;
+    font-style: italic;
+  }
+
+  .diagram-title {
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    color: var(--text-muted);
+    text-align: center;
+    margin-bottom: 20px;
+  }
+
+  /* Comparison table */
+  .comparison-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 28px 0;
+    font-family: 'Inter', sans-serif;
+    font-size: 15px;
+  }
+
+  .comparison-table th {
+    background: #f6f8fa;
+    font-weight: 700;
+    text-align: left;
+    padding: 12px 16px;
+    border-bottom: 2px solid var(--border);
+    font-size: 13px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+    color: var(--text-secondary);
+  }
+
+  .comparison-table td {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border-light);
+    vertical-align: top;
+  }
+
+  .comparison-table tr:last-child td { border-bottom: none; }
+
+  .badge-good {
+    display: inline-block;
+    background: #dcfce7;
+    color: #166534;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  .badge-bad {
+    display: inline-block;
+    background: #fee2e2;
+    color: #991b1b;
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-weight: 600;
+    font-size: 13px;
+  }
+
+  /* Separator */
+  .section-divider {
+    width: 48px;
+    height: 3px;
+    background: var(--border);
+    margin: 56px auto;
+    border-radius: 2px;
+  }
+
+  /* Stats row */
+  .stats-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+    margin: 32px 0;
+  }
+
+  @media (max-width: 600px) {
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+
+  .stat-card {
+    text-align: center;
+    padding: 20px 12px;
+    background: #f8faf8;
+    border: 1px solid #e8ede8;
+    border-radius: 10px;
+  }
+
+  .stat-number {
+    font-family: 'Inter', sans-serif;
+    font-size: 28px;
+    font-weight: 700;
+    color: var(--accent);
+    line-height: 1.2;
+  }
+
+  .stat-label {
+    font-family: 'Inter', sans-serif;
+    font-size: 12px;
+    color: var(--text-muted);
+    margin-top: 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+
+  /* SVG Diagram styles */
+  svg text {
+    font-family: 'Inter', sans-serif;
+  }
+
+  .svg-box {
+    fill: #fff;
+    stroke: #d0d5dd;
+    stroke-width: 1.5;
+    rx: 8;
+  }
+
+  .svg-box-accent {
+    fill: #e6f4e6;
+    stroke: #1a8917;
+    stroke-width: 1.5;
+    rx: 8;
+  }
+
+  .svg-box-blue {
+    fill: #eff6ff;
+    stroke: #3b82f6;
+    stroke-width: 1.5;
+    rx: 8;
+  }
+
+  .svg-box-orange {
+    fill: #fff7ed;
+    stroke: #f97316;
+    stroke-width: 1.5;
+    rx: 8;
+  }
+
+  .svg-box-purple {
+    fill: #faf5ff;
+    stroke: #a855f7;
+    stroke-width: 1.5;
+    rx: 8;
+  }
+
+  .svg-box-red {
+    fill: #fef2f2;
+    stroke: #ef4444;
+    stroke-width: 1.5;
+    rx: 8;
+  }
+
+  .svg-box-dark {
+    fill: #1e293b;
+    stroke: #334155;
+    stroke-width: 1.5;
+    rx: 8;
+  }
+
+  .svg-arrow {
+    stroke: #94a3b8;
+    stroke-width: 1.5;
+    fill: none;
+    marker-end: url(#arrowhead);
+  }
+
+  .svg-arrow-accent {
+    stroke: #1a8917;
+    stroke-width: 2;
+    fill: none;
+    marker-end: url(#arrowhead-accent);
+  }
+
+  .svg-label {
+    font-size: 11px;
+    fill: #64748b;
+    font-weight: 500;
+  }
+
+  .svg-title {
+    font-size: 13px;
+    fill: #1e293b;
+    font-weight: 700;
+  }
+
+  .svg-body {
+    font-size: 11px;
+    fill: #475569;
+    font-weight: 400;
+  }
+
+  .svg-small {
+    font-size: 10px;
+    fill: #94a3b8;
+    font-weight: 400;
+  }
+
+  .svg-number {
+    font-size: 10px;
+    fill: #fff;
+    font-weight: 700;
+  }
+
+  .svg-icon-circle {
+    fill: #1a8917;
+    r: 11;
+  }
+
+  .svg-icon-circle-blue {
+    fill: #3b82f6;
+    r: 11;
+  }
+
+  .svg-icon-circle-orange {
+    fill: #f97316;
+    r: 11;
+  }
+
+  .svg-icon-circle-purple {
+    fill: #a855f7;
+    r: 11;
+  }
+
+  /* Numbered list for blog */
+  .numbered-insight {
+    display: flex;
+    gap: 16px;
+    margin-bottom: 28px;
+    align-items: flex-start;
+  }
+
+  .insight-number {
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
+    font-size: 14px;
+    color: #fff;
+    background: var(--accent);
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    margin-top: 4px;
+  }
+
+  .insight-content {
+    flex: 1;
+  }
+
+  .insight-title {
+    font-family: 'Inter', sans-serif;
+    font-weight: 700;
+    font-size: 16px;
+    margin-bottom: 4px;
+  }
+
+  .insight-text {
+    font-size: 16px;
+    line-height: 1.7;
+    color: var(--text-secondary);
+  }
+
+  /* Footer */
+  .article-footer {
+    margin-top: 64px;
+    padding-top: 32px;
+    border-top: 1px solid var(--border-light);
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    color: var(--text-muted);
+  }
+
+  .tag-list {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px;
+    margin-top: 12px;
+  }
+
+  .tag-pill {
+    background: #f0f0f0;
+    padding: 6px 14px;
+    border-radius: 100px;
+    font-size: 13px;
+    color: var(--text-secondary);
+    font-weight: 500;
+  }
+
+  /* Responsive */
+  @media (max-width: 768px) {
+    h1 { font-size: 30px; }
+    .subtitle { font-size: 18px; }
+    .article-container { padding: 32px 16px 80px; }
+    .stats-grid { grid-template-columns: repeat(2, 1fr); }
+  }
+</style>
+</head>
+<body>
+
+<article class="article-container">
+
+  <!-- Meta -->
+  <div class="article-meta">
+    <span class="tag">ML Infrastructure</span>
+    25 min read
+  </div>
+
+  <!-- Title -->
+  <h1>Streaming 20 TB to 160 GPUs: A Production Architecture for Vision-Language Model Training</h1>
+
+  <p class="subtitle">
+    How a decoupled, streaming-first data architecture built on MosaicML Streaming delivered reliable, high-throughput multimodal training across hundreds of GPUs for weeks — without ever downloading the full dataset.
+  </p>
+
+  <!-- Author -->
+  <div class="author-row">
+    <div class="author-avatar">KM</div>
+    <div class="author-info">
+      <div class="author-name">Krishna Mahajan</div>
+      <div class="author-date">Published in <em>Towards Data Science</em> · Feb 2026</div>
+    </div>
+  </div>
+
+  <!-- TL;DR -->
+  <div class="callout" style="border-left-color:#1e293b; background:#f8fafc; margin-bottom:28px;">
+    <div class="callout-title" style="color:#1e293b;">TL;DR</div>
+    <strong style="font-family:Inter,sans-serif;font-size:15px;">We trained a 7B vision-language model on 20+ TB of multimodal data across 160 H100 GPUs for 3+ weeks — without ever downloading the full dataset to any node.</strong>
+    <ul style="margin:10px 0 0 18px;font-family:Inter,sans-serif;font-size:15px;line-height:1.7;color:#475569;">
+      <li>MosaicML Streaming (MDS) transformed S3 latency into a deterministic, high-throughput data plane using shard caching and prefetching.</li>
+      <li>Three fully decoupled pipelines — tokenization, training, continuous validation — enabled fault-isolated, rapid experimentation at scale.</li>
+      <li>Sample-level checkpoint resume saved thousands of GPU-hours across multiple node failures during the run.</li>
+    </ul>
+  </div>
+
+  <!-- Who is this for -->
+  <p style="font-family:Inter,sans-serif;font-size:14px;color:#64748b;margin-bottom:28px;line-height:1.6;">
+    <strong>Who is this for:</strong> ML infrastructure engineers, platform engineers building training pipelines, and applied scientists running multi-week distributed training on cloud infrastructure.
+  </p>
+
+  <!-- Stats -->
+  <div class="stats-grid">
+    <div class="stat-card">
+      <div class="stat-number">20+ TB</div>
+      <div class="stat-label">Training Data</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">160</div>
+      <div class="stat-label">H100 GPUs</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">600M</div>
+      <div class="stat-label">Image References</div>
+    </div>
+    <div class="stat-card">
+      <div class="stat-number">3+ Wks</div>
+      <div class="stat-label">Continuous Training</div>
+    </div>
+  </div>
+
+  <!-- Intro -->
+  <p>
+    Fine-tuning a 7B-parameter vision-language model on multimodal data sounds straightforward — until you realize your dataset is <strong>20 terabytes</strong>, references <strong>600 million images</strong> spread across cloud object storage, and your training cluster has nowhere near enough local disk to hold it all.
+  </p>
+  <p>
+    This was the challenge we faced. The solution was a streaming-first architecture built on <strong>MosaicML Streaming (MDS)</strong> that transforms cloud storage latency into a deterministic, high-throughput data plane — enabling multi-week training runs with sample-level fault tolerance, zero data duplication, and GPUs that never go idle waiting for data.
+  </p>
+  <p>
+    In this post, I'll walk through the complete system: why naive approaches fail at this scale, how MDS solves it, the three decoupled pipelines that make it operationally resilient, and the engineering details that kept 160 H100s fed for over three weeks straight.
+  </p>
+
+  <div class="section-divider"></div>
+
+  <!-- Section 1: The Problem -->
+  <h2>The Problem: Why Naive Data Loading Fails at Scale</h2>
+
+  <p>
+    Training a large multimodal model means iterating over billions of tokens and millions of images. The data has to come from somewhere. Let's look at the two obvious approaches and why both break down.
+  </p>
+
+  <h3>Approach 1: Download everything first</h3>
+  <p>
+    Pre-downloading 20 TB to each training node's local storage simply isn't feasible. Even if the disk were large enough, the download time alone would add hours of idle GPU time before training begins. And if the job crashes mid-training? Start the download over.
+  </p>
+
+  <h3>Approach 2: Stream individual files on the fly</h3>
+  <p>
+    The alternative — fetching individual images directly from S3 during training — fails catastrophically due to network latency. In our measurements, the <strong>Time-To-First-Byte (TTFB)</strong> for an S3 GET request ranged from 20–100ms (the exact number varies by region, SDK, and object path, but the order of magnitude is consistent). If a single training batch requires 1,000 images, even parallel fetching hits request rate limits and imposes massive CPU overhead managing thousands of HTTP connections.
+  </p>
+
+  <!-- Diagram: The Latency Problem -->
+  <div class="diagram-container">
+    <div class="diagram-title">The Latency Problem: Naive S3 Fetching vs. Shard Streaming</div>
+    <svg width="680" height="340" viewBox="0 0 680 340" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="arrowhead" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#94a3b8"/>
+        </marker>
+        <marker id="arrowhead-accent" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#1a8917"/>
+        </marker>
+        <marker id="arrowhead-red" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#ef4444"/>
+        </marker>
+      </defs>
+
+      <!-- Left side: Naive approach -->
+      <text x="170" y="20" text-anchor="middle" class="svg-title" style="fill:#ef4444">❌ Naive: 1,000 S3 GETs per batch</text>
+
+      <!-- GPU box -->
+      <rect x="20" y="40" width="100" height="50" class="svg-box-red" rx="8"/>
+      <text x="70" y="60" text-anchor="middle" class="svg-title" style="font-size:11px">GPU</text>
+      <text x="70" y="76" text-anchor="middle" class="svg-small" style="fill:#ef4444">⏳ idle, waiting</text>
+
+      <!-- Arrow from GPU to S3 -->
+      <line x1="120" y1="65" x2="180" y2="65" class="svg-arrow" style="stroke:#ef4444" marker-end="url(#arrowhead-red)"/>
+
+      <!-- S3 cloud -->
+      <rect x="188" y="40" width="130" height="50" class="svg-box" rx="8"/>
+      <text x="253" y="60" text-anchor="middle" class="svg-title" style="font-size:11px">☁️ S3 Bucket</text>
+      <text x="253" y="76" text-anchor="middle" class="svg-small">1,000 individual GETs</text>
+
+      <!-- Latency bars -->
+      <text x="20" y="120" class="svg-label" style="font-size:10px">Per-request latency (20-100ms each):</text>
+      <g transform="translate(20, 130)">
+        <rect x="0" y="0" width="40" height="12" rx="2" fill="#fca5a5"/>
+        <rect x="44" y="0" width="55" height="12" rx="2" fill="#fca5a5"/>
+        <rect x="103" y="0" width="35" height="12" rx="2" fill="#fca5a5"/>
+        <rect x="142" y="0" width="60" height="12" rx="2" fill="#fca5a5"/>
+        <rect x="206" y="0" width="45" height="12" rx="2" fill="#fca5a5"/>
+        <rect x="255" y="0" width="50" height="12" rx="2" fill="#fca5a5"/>
+        <text x="316" y="10" class="svg-small" style="fill:#ef4444;font-weight:600"> ... × 1,000</text>
+      </g>
+      <text x="20" y="168" class="svg-body" style="fill:#ef4444;font-weight:600">⏱ Total: seconds per batch → GPU starvation</text>
+
+      <!-- Divider -->
+      <line x1="340" y1="30" x2="340" y2="320" stroke="#e2e8f0" stroke-width="1" stroke-dasharray="4,4"/>
+
+      <!-- Right side: Streaming approach -->
+      <text x="510" y="20" text-anchor="middle" class="svg-title" style="fill:#1a8917">✅ MDS: 1 Shard Read per batch</text>
+
+      <!-- GPU box -->
+      <rect x="370" y="40" width="100" height="50" class="svg-box-accent" rx="8"/>
+      <text x="420" y="60" text-anchor="middle" class="svg-title" style="font-size:11px">GPU</text>
+      <text x="420" y="76" text-anchor="middle" class="svg-small" style="fill:#1a8917">🔥 100% utilized</text>
+
+      <!-- Arrow -->
+      <line x1="470" y1="65" x2="520" y2="65" class="svg-arrow-accent"/>
+
+      <!-- NVMe cache -->
+      <rect x="528" y="40" width="130" height="50" class="svg-box-accent" rx="8"/>
+      <text x="593" y="58" text-anchor="middle" class="svg-title" style="font-size:11px">NVMe Cache</text>
+      <text x="593" y="74" text-anchor="middle" class="svg-small" style="fill:#1a8917">pre-fetched shard</text>
+
+      <!-- Shard visualization -->
+      <text x="370" y="120" class="svg-label" style="font-size:10px">One shard = 128 self-contained samples:</text>
+      <g transform="translate(370, 130)">
+        <rect x="0" y="0" width="280" height="14" rx="3" fill="#bbf7d0" stroke="#1a8917" stroke-width="1"/>
+        <text x="10" y="10" style="font-family:'Source Code Pro',monospace;font-size:9px;fill:#166534">S0 | S1 | S2 | S3 | ... | S127  ← single sequential read</text>
+      </g>
+
+      <text x="370" y="168" class="svg-body" style="fill:#1a8917;font-weight:600">⏱ Latency: ~0ms (cached) → full throughput</text>
+
+      <!-- Bottom comparison -->
+      <rect x="20" y="200" width="640" height="120" rx="10" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="340" y="226" text-anchor="middle" class="svg-title" style="font-size:13px">The Key Insight</text>
+
+      <text x="40" y="252" class="svg-body" style="font-size:12px">
+        <tspan x="40" dy="0">MDS transforms <tspan font-weight="700">latency-bound random I/O</tspan> (thousands of small S3 GETs)</tspan>
+        <tspan x="40" dy="18">into <tspan font-weight="700">throughput-optimized sequential I/O</tspan> (one large shard read from local NVMe).</tspan>
+        <tspan x="40" dy="18">Prefetching ensures shards arrive <tspan font-weight="700">before</tspan> the GPU needs them.</tspan>
+      </text>
+      <text x="40" y="306" class="svg-small" style="font-size:11px;fill:#64748b">Combined with LRU eviction, only ~500 GB of cache is needed to stream through 20+ TB of data.</text>
+    </svg>
+    <div class="diagram-caption">Fig 1. Naive S3 fetching starves GPUs; MDS shard streaming keeps them at full utilization.</div>
+  </div>
+
+  <p>
+    What we needed was something in between: a system that <em>appears</em> to be a fast local dataset but actually streams from cloud storage on demand, with intelligent caching and prefetching. That's exactly what MosaicML Streaming provides.
+  </p>
+
+  <div class="section-divider"></div>
+
+  <!-- Section 2: MDS Deep Dive -->
+  <h2>MosaicML Streaming (MDS): The Data Plane</h2>
+
+  <p>
+    MDS acts as high-performance middleware between cloud object storage and GPU training. It transforms the non-deterministic, latency-bound nature of S3 into a deterministic stream that mimics a local random-access array. Here's how it works.
+  </p>
+
+  <h3>The Shard Format</h3>
+  <p>
+    The fundamental unit in MDS is the <strong>shard</strong> — a self-contained binary file holding a contiguous sequence of samples. Each shard contains all the data needed to decode its samples, supports optional compression (we used zstd), and can be addressed independently. In our setup, we generated approximately <strong>39,000 shards</strong> from ~5 million training samples across 15 tokenization nodes.
+  </p>
+
+  <!-- Diagram: Shard anatomy -->
+  <div class="diagram-container">
+    <div class="diagram-title">Anatomy of the MDS Data Format</div>
+    <svg width="680" height="460" viewBox="0 0 680 460" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="ah" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#94a3b8"/>
+        </marker>
+        <marker id="ah-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#1a8917"/>
+        </marker>
+      </defs>
+
+      <!-- Dataset level -->
+      <rect x="220" y="10" width="240" height="44" rx="8" fill="#1e293b" stroke="#334155" stroke-width="1.5"/>
+      <text x="340" y="28" text-anchor="middle" style="font-family:Inter;font-size:11px;fill:#94a3b8;font-weight:600">📦 DATASET (S3 Bucket)</text>
+      <text x="340" y="43" text-anchor="middle" style="font-family:'Source Code Pro';font-size:10px;fill:#64748b">s3://bucket/tokenized_data/</text>
+
+      <!-- Arrow down to index.json -->
+      <line x1="280" y1="54" x2="200" y2="84" class="svg-arrow" marker-end="url(#ah)"/>
+      <line x1="400" y1="54" x2="400" y2="84" class="svg-arrow" marker-end="url(#ah)"/>
+
+      <!-- index.json -->
+      <rect x="130" y="84" width="140" height="40" rx="8" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
+      <text x="200" y="100" text-anchor="middle" class="svg-title" style="font-size:11px">📋 index.json</text>
+      <text x="200" y="114" text-anchor="middle" class="svg-small" style="fill:#92400e">Master manifest</text>
+
+      <!-- Shards row -->
+      <rect x="320" y="84" width="110" height="40" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="375" y="100" text-anchor="middle" style="font-family:'Source Code Pro';font-size:9px;fill:#1e40af;font-weight:500">shard.0.00000</text>
+      <text x="375" y="114" text-anchor="middle" class="svg-small">.mds.zstd</text>
+
+      <rect x="440" y="84" width="110" height="40" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="495" y="100" text-anchor="middle" style="font-family:'Source Code Pro';font-size:9px;fill:#1e40af;font-weight:500">shard.0.00001</text>
+      <text x="495" y="114" text-anchor="middle" class="svg-small">.mds.zstd</text>
+
+      <text x="568" y="106" text-anchor="middle" style="font-size:16px;fill:#94a3b8">...</text>
+
+      <rect x="590" y="84" width="80" height="40" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="630" y="106" text-anchor="middle" class="svg-small" style="fill:#1e40af;font-weight:600">×39,000</text>
+
+      <!-- Arrow down into shard detail -->
+      <line x1="375" y1="124" x2="340" y2="160" class="svg-arrow" marker-end="url(#ah)"/>
+
+      <!-- Inside one shard -->
+      <rect x="40" y="160" width="600" height="130" rx="10" fill="#f0f7ff" stroke="#bfdbfe" stroke-width="1" stroke-dasharray="4,3"/>
+      <text x="60" y="182" class="svg-title" style="font-size:12px;fill:#1e40af">Inside One Shard</text>
+
+      <!-- Sample boxes -->
+      <rect x="60" y="196" width="90" height="76" rx="6" fill="#fff" stroke="#93c5fd" stroke-width="1"/>
+      <text x="105" y="212" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#1e40af;font-weight:700">Sample 0</text>
+      <text x="105" y="228" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#64748b">input_ids: [...]</text>
+      <text x="105" y="240" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#64748b">labels: [...]</text>
+      <text x="105" y="252" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#64748b">attn_mask: [...]</text>
+      <text x="105" y="264" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#3b82f6;font-weight:600">images: [b64...]</text>
+
+      <rect x="162" y="196" width="90" height="76" rx="6" fill="#fff" stroke="#93c5fd" stroke-width="1"/>
+      <text x="207" y="212" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#1e40af;font-weight:700">Sample 1</text>
+      <text x="207" y="228" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#64748b">input_ids: [...]</text>
+      <text x="207" y="240" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#64748b">labels: [...]</text>
+      <text x="207" y="252" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#64748b">attn_mask: [...]</text>
+      <text x="207" y="264" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#3b82f6;font-weight:600">images: [b64...]</text>
+
+      <rect x="264" y="196" width="90" height="76" rx="6" fill="#fff" stroke="#93c5fd" stroke-width="1"/>
+      <text x="309" y="212" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#1e40af;font-weight:700">Sample 2</text>
+      <text x="309" y="234" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#94a3b8">...</text>
+
+      <text x="378" y="234" style="font-size:20px;fill:#94a3b8">· · ·</text>
+
+      <rect x="430" y="196" width="90" height="76" rx="6" fill="#fff" stroke="#93c5fd" stroke-width="1"/>
+      <text x="475" y="212" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#1e40af;font-weight:700">Sample 127</text>
+      <text x="475" y="234" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#94a3b8">...</text>
+
+      <text x="544" y="240" text-anchor="middle" class="svg-body" style="font-size:11px;fill:#1e40af">128 samples<br/>per shard</text>
+
+      <!-- Arrow down to key properties -->
+      <line x1="340" y1="290" x2="340" y2="310" class="svg-arrow" marker-end="url(#ah)"/>
+
+      <!-- Key properties row -->
+      <rect x="40" y="316" width="145" height="50" rx="8" fill="#e6f4e6" stroke="#1a8917" stroke-width="1"/>
+      <text x="113" y="336" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#166534;font-weight:700">🔍 O(log S) + O(1) Access</text>
+      <text x="113" y="352" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#166534">via cumulative index</text>
+
+      <rect x="198" y="316" width="145" height="50" rx="8" fill="#fef3c7" stroke="#f59e0b" stroke-width="1"/>
+      <text x="271" y="336" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#92400e;font-weight:700">📦 Self-Contained</text>
+      <text x="271" y="352" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#92400e">images embedded as b64</text>
+
+      <rect x="356" y="316" width="145" height="50" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1"/>
+      <text x="429" y="336" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#1e40af;font-weight:700">🗜️ zstd Compressed</text>
+      <text x="429" y="352" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#1e40af">~30% size reduction</text>
+
+      <rect x="514" y="316" width="145" height="50" rx="8" fill="#faf5ff" stroke="#a855f7" stroke-width="1"/>
+      <text x="587" y="336" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#7e22ce;font-weight:700">🔄 Restart-Safe</text>
+      <text x="587" y="352" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#7e22ce">no re-download needed</text>
+
+      <!-- Naming convention -->
+      <rect x="40" y="386" width="620" height="60" rx="8" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="60" y="406" style="font-family:Inter;font-size:10px;fill:#64748b;font-weight:600">NAMING CONVENTION</text>
+      <text x="60" y="426" style="font-family:'Source Code Pro';font-size:13px;fill:#1e293b;font-weight:500">shard.<tspan fill="#ef4444">{rank}</tspan>.<tspan fill="#3b82f6">{local_index}</tspan>.mds.zstd</text>
+      <text x="340" y="426" style="font-family:Inter;font-size:10px;fill:#64748b">
+        <tspan fill="#ef4444">rank</tspan> = tokenization node &nbsp;|&nbsp; <tspan fill="#3b82f6">local_index</tspan> = shard # within that node
+      </text>
+    </svg>
+    <div class="diagram-caption">Fig 2. The MDS data format: shards contain self-contained samples with embedded images, enabling fast indexed access and restart-safe streaming.</div>
+  </div>
+
+  <h3>The Index: Fast Sample Lookup</h3>
+  <p>
+    At the heart of MDS sits <code>index.json</code> — a master manifest that enables fast random access to any of the ~5 million samples without scanning. It contains the sample count for each shard, from which MDS builds a <strong>cumulative sum table</strong> at initialization. Looking up any global sample index is then a binary search over shards — <strong>O(log S)</strong> where S is the number of shards — followed by <strong>O(1) access</strong> within the shard itself:
+  </p>
+
+  <pre><code><span class="code-comment"># Cumulative sum table built from index.json</span>
+<span class="code-comment"># 5 shards with [128, 128, 100, 128, 50] samples:</span>
+cumsum = [<span class="code-number">0</span>, <span class="code-number">128</span>, <span class="code-number">256</span>, <span class="code-number">356</span>, <span class="code-number">484</span>, <span class="code-number">534</span>]
+
+<span class="code-keyword">def</span> <span class="code-function">global_to_shard</span>(global_idx, cumsum):
+    shard_idx = bisect.bisect_right(cumsum, global_idx) - <span class="code-number">1</span>
+    local_idx = global_idx - cumsum[shard_idx]
+    <span class="code-keyword">return</span> shard_idx, local_idx
+
+<span class="code-comment"># global_idx=300 → Shard 2, local sample 44</span>
+<span class="code-comment"># O(log N) where N = number of shards</span></code></pre>
+
+  <p>
+    This is what enables MDS's killer feature: <strong>instant resumption</strong>. When training restarts after a crash, the system can jump directly to the exact sample where it left off — no re-streaming, no re-computation. At our scale, this saved thousands of GPU-hours across multiple node failures during the three-week run.
+  </p>
+
+  <div class="callout">
+    <div class="callout-title">Why this matters</div>
+    Without a global index, finding sample 1,234,567 requires opening every shard and counting samples sequentially — O(S) where S = 39,000 shards. With <code>index.json</code>, it's O(log S) to locate the shard via binary search, then O(1) to read within it. At 39,000 shards, that's ~15 comparisons versus 39,000 file operations.
+  </div>
+
+  <div class="section-divider"></div>
+
+  <!-- Section 3: Architecture Overview -->
+  <h2>System Architecture: Three Decoupled Pipelines</h2>
+
+  <p>
+    The full system consists of three independent pipelines — tokenization, training, and continuous validation — unified by a single data layer (MDS shards on S3) and shared observability (Weights & Biases). Each pipeline can fail, restart, and scale independently.
+  </p>
+
+  <!-- Architecture Diagram -->
+  <div class="diagram-container">
+    <div class="diagram-title">End-to-End System Architecture</div>
+    <svg width="680" height="520" viewBox="0 0 680 520" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a1" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#94a3b8"/>
+        </marker>
+        <marker id="a1-green" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#1a8917"/>
+        </marker>
+        <marker id="a1-blue" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#3b82f6"/>
+        </marker>
+        <marker id="a1-orange" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#f97316"/>
+        </marker>
+        <marker id="a1-purple" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#a855f7"/>
+        </marker>
+      </defs>
+
+      <!-- Data Sources -->
+      <rect x="20" y="20" width="200" height="70" rx="8" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+      <text x="120" y="42" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#94a3b8;font-weight:600">📦 RAW DATA SOURCES</text>
+      <text x="120" y="58" text-anchor="middle" style="font-family:Inter;font-size:11px;fill:#e2e8f0">10M+ JSON samples</text>
+      <text x="120" y="74" text-anchor="middle" style="font-family:Inter;font-size:11px;fill:#e2e8f0">1B+ images in cloud storage</text>
+
+      <!-- Arrow to tokenization -->
+      <line x1="220" y1="55" x2="270" y2="55" stroke="#94a3b8" stroke-width="1.5" marker-end="url(#a1)"/>
+
+      <!-- Pipeline 1: Tokenization -->
+      <rect x="280" y="15" width="200" height="80" rx="10" fill="#e6f4e6" stroke="#1a8917" stroke-width="2"/>
+      <circle cx="300" cy="35" r="11" fill="#1a8917"/>
+      <text x="300" y="39" text-anchor="middle" style="font-size:10px;fill:#fff;font-weight:700">1</text>
+      <text x="315" y="39" style="font-family:Inter;font-size:12px;fill:#166534;font-weight:700">Tokenization</text>
+      <text x="380" y="56" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#166534">15 nodes · CPU/IO-bound</text>
+      <text x="380" y="72" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#15803d">Download images → tokenize → shard</text>
+      <text x="380" y="84" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#15803d">80 threads × 100 S3 connections/node</text>
+
+      <!-- Arrow to MDS shards -->
+      <line x1="380" y1="95" x2="380" y2="130" stroke="#1a8917" stroke-width="2" marker-end="url(#a1-green)"/>
+
+      <!-- Central MDS Layer -->
+      <rect x="200" y="138" width="360" height="60" rx="10" fill="#f0fdf4" stroke="#1a8917" stroke-width="2" stroke-dasharray="6,3"/>
+      <text x="380" y="158" text-anchor="middle" style="font-family:Inter;font-size:13px;fill:#166534;font-weight:700">☁️ MDS Shards on S3</text>
+      <text x="380" y="176" text-anchor="middle" style="font-family:Inter;font-size:11px;fill:#15803d">39K shards · ~13 TB compressed · Single Source of Truth</text>
+
+      <!-- Train/Eval split arrows -->
+      <line x1="310" y1="198" x2="230" y2="250" stroke="#3b82f6" stroke-width="2" marker-end="url(#a1-blue)"/>
+      <text x="246" y="228" style="font-family:Inter;font-size:9px;fill:#3b82f6;font-weight:600">train split</text>
+
+      <line x1="450" y1="198" x2="530" y2="250" stroke="#f97316" stroke-width="2" marker-end="url(#a1-orange)"/>
+      <text x="480" y="228" style="font-family:Inter;font-size:9px;fill:#f97316;font-weight:600">eval split</text>
+
+      <!-- Pipeline 2: Training -->
+      <rect x="80" y="258" width="230" height="90" rx="10" fill="#eff6ff" stroke="#3b82f6" stroke-width="2"/>
+      <circle cx="100" cy="278" r="11" fill="#3b82f6"/>
+      <text x="100" y="282" text-anchor="middle" style="font-size:10px;fill:#fff;font-weight:700">2</text>
+      <text x="120" y="282" style="font-family:Inter;font-size:12px;fill:#1e40af;font-weight:700">Training Pipeline</text>
+      <text x="195" y="300" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#1e40af">20 nodes · 160 H100 GPUs</text>
+      <text x="195" y="316" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#2563eb">Qwen2.5-VL-7B + LoRA</text>
+      <text x="195" y="332" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#2563eb">DDP ZeRO-0 · FlashAttention-2</text>
+      <text x="195" y="342" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#2563eb">Batch: 2,560 samples/step</text>
+
+      <!-- Pipeline 3: Validation -->
+      <rect x="400" y="258" width="230" height="90" rx="10" fill="#fff7ed" stroke="#f97316" stroke-width="2"/>
+      <circle cx="420" cy="278" r="11" fill="#f97316"/>
+      <text x="420" y="282" text-anchor="middle" style="font-size:10px;fill:#fff;font-weight:700">3</text>
+      <text x="440" y="282" style="font-family:Inter;font-size:12px;fill:#9a3412;font-weight:700">Continuous Validation</text>
+      <text x="515" y="300" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#9a3412">4 nodes · 32 GPUs</text>
+      <text x="515" y="316" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#c2410c">Polls S3 for new checkpoints</text>
+      <text x="515" y="332" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#c2410c">Forward pass → val loss</text>
+      <text x="515" y="342" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#c2410c">Zero impact on training</text>
+
+      <!-- Checkpoint arrow: Training → S3 → Validation -->
+      <line x1="195" y1="348" x2="195" y2="395" stroke="#a855f7" stroke-width="1.5" marker-end="url(#a1-purple)"/>
+      <rect x="110" y="400" width="170" height="36" rx="6" fill="#faf5ff" stroke="#a855f7" stroke-width="1"/>
+      <text x="195" y="422" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#7e22ce;font-weight:600">💾 Checkpoints → S3</text>
+
+      <path d="M 280 418 L 400 418 L 515 355" fill="none" stroke="#a855f7" stroke-width="1.5" stroke-dasharray="5,3" marker-end="url(#a1-purple)"/>
+      <text x="370" y="408" style="font-family:Inter;font-size:8px;fill:#a855f7;font-weight:500">auto-poll</text>
+
+      <!-- W&B -->
+      <rect x="380" y="400" width="230" height="36" rx="6" fill="#1e293b" stroke="#475569" stroke-width="1"/>
+      <text x="495" y="422" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#e2e8f0;font-weight:600">📊 W&B Dashboard (grouped runs)</text>
+
+      <!-- Arrows to W&B -->
+      <line x1="210" y1="436" x2="380" y2="420" stroke="#64748b" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#a1)"/>
+      <line x1="515" y1="348" x2="515" y2="400" stroke="#64748b" stroke-width="1" stroke-dasharray="3,2" marker-end="url(#a1)"/>
+
+      <!-- Key principles at bottom -->
+      <g transform="translate(20, 460)">
+        <rect x="0" y="0" width="155" height="44" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+        <text x="78" y="17" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#64748b;font-weight:700">🔄 TOKENIZE ONCE</text>
+        <text x="78" y="33" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#94a3b8">Train many experiments</text>
+
+        <rect x="170" y="0" width="155" height="44" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+        <text x="248" y="17" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#64748b;font-weight:700">🛡️ FAULT ISOLATED</text>
+        <text x="248" y="33" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#94a3b8">Independent restarts</text>
+
+        <rect x="340" y="0" width="155" height="44" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+        <text x="418" y="17" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#64748b;font-weight:700">☁️ DATA NEVER LANDS</text>
+        <text x="418" y="33" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#94a3b8">500 GB cache for 20 TB</text>
+
+        <rect x="510" y="0" width="155" height="44" rx="6" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+        <text x="588" y="17" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#64748b;font-weight:700">📊 UNIFIED OBSERVABILITY</text>
+        <text x="588" y="33" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#94a3b8">Train + eval in one dashboard</text>
+      </g>
+    </svg>
+    <div class="diagram-caption">Fig 3. Three fully decoupled pipelines unified by MDS shards on S3. Each can fail, restart, and scale independently.</div>
+  </div>
+
+  <p>
+    The key insight behind this architecture is the separation of <strong>CPU/IO-bound work</strong> (tokenization: downloading 600M images, encoding, sharding) from <strong>GPU-bound work</strong> (training: forward/backward passes on 160 H100s). Running them together would waste expensive GPU time on image downloads. Decoupling means you tokenize once and run dozens of training experiments with different hyperparameters — iteration time drops from days to minutes.
+  </p>
+
+  <div class="section-divider"></div>
+
+  <!-- Section 4: Tokenization Pipeline -->
+  <h2>Pipeline 1: Distributed Tokenization</h2>
+
+  <p>
+    The tokenization pipeline transforms raw multimodal samples (JSON metadata + S3 image URIs) into self-contained MDS shards. This is the most I/O-intensive phase: each of the 15 nodes downloads images using 80 concurrent threads with 100 S3 connections, achieving ~170 images/second per node — a <strong>40–60× speedup</strong> over sequential downloads.
+  </p>
+
+  <!-- Tokenization pipeline diagram -->
+  <div class="diagram-container">
+    <div class="diagram-title">Distributed Tokenization: From Raw Samples to MDS Shards</div>
+    <svg width="680" height="380" viewBox="0 0 680 380" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a2" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#1a8917"/>
+        </marker>
+      </defs>
+
+      <!-- Step flow -->
+      <!-- Step 1: Raw data -->
+      <rect x="20" y="30" width="120" height="60" rx="8" fill="#f1f5f9" stroke="#94a3b8" stroke-width="1.5"/>
+      <text x="80" y="52" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#475569;font-weight:700">Raw JSON Files</text>
+      <text x="80" y="68" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#94a3b8">5,000 files · S3 URIs</text>
+      <text x="80" y="80" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#94a3b8">for ~600M images</text>
+
+      <line x1="140" y1="60" x2="162" y2="60" stroke="#1a8917" stroke-width="1.5" marker-end="url(#a2)"/>
+
+      <!-- Step 2: Distribute -->
+      <rect x="170" y="30" width="120" height="60" rx="8" fill="#e6f4e6" stroke="#1a8917" stroke-width="1.5"/>
+      <text x="230" y="50" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#166534;font-weight:700">Distribute</text>
+      <text x="230" y="64" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#15803d">chunk = ceil(files/nodes)</text>
+      <text x="230" y="78" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#15803d">~333 files per node</text>
+
+      <line x1="290" y1="60" x2="312" y2="60" stroke="#1a8917" stroke-width="1.5" marker-end="url(#a2)"/>
+
+      <!-- Step 3: Parallel download -->
+      <rect x="320" y="30" width="130" height="60" rx="8" fill="#e6f4e6" stroke="#1a8917" stroke-width="1.5"/>
+      <text x="385" y="50" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#166534;font-weight:700">Download + Encode</text>
+      <text x="385" y="64" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#15803d">80 threads × 100 conns</text>
+      <text x="385" y="78" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#15803d">→ JPEG → Base64</text>
+
+      <line x1="450" y1="60" x2="472" y2="60" stroke="#1a8917" stroke-width="1.5" marker-end="url(#a2)"/>
+
+      <!-- Step 4: Write shards -->
+      <rect x="480" y="30" width="120" height="60" rx="8" fill="#e6f4e6" stroke="#1a8917" stroke-width="1.5"/>
+      <text x="540" y="50" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#166534;font-weight:700">Write MDS Shards</text>
+      <text x="540" y="64" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#15803d">128 samples/shard</text>
+      <text x="540" y="78" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#15803d">zstd compressed</text>
+
+      <!-- Nodes visualization -->
+      <text x="20" y="126" style="font-family:Inter;font-size:11px;fill:#1e293b;font-weight:700">15-Node Parallel Execution:</text>
+
+      <g transform="translate(20, 140)">
+        <!-- Node 0 -->
+        <rect x="0" y="0" width="130" height="66" rx="6" fill="#fff" stroke="#86efac" stroke-width="1.5"/>
+        <text x="65" y="16" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#166534;font-weight:700">Node 0</text>
+        <text x="65" y="30" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#475569">Files 0–332</text>
+        <text x="65" y="42" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#64748b">→ shard.0.00000.mds.zstd</text>
+        <text x="65" y="54" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#64748b">→ shard.0.02599.mds.zstd</text>
+
+        <!-- Node 1 -->
+        <rect x="142" y="0" width="130" height="66" rx="6" fill="#fff" stroke="#86efac" stroke-width="1.5"/>
+        <text x="207" y="16" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#166534;font-weight:700">Node 1</text>
+        <text x="207" y="30" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#475569">Files 333–665</text>
+        <text x="207" y="42" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#64748b">→ shard.1.00000.mds.zstd</text>
+        <text x="207" y="54" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#64748b">→ shard.1.02650.mds.zstd</text>
+
+        <!-- ... -->
+        <text x="302" y="30" text-anchor="middle" style="font-size:20px;fill:#94a3b8">···</text>
+
+        <!-- Node 14 -->
+        <rect x="340" y="0" width="130" height="66" rx="6" fill="#fff" stroke="#86efac" stroke-width="1.5"/>
+        <text x="405" y="16" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#166534;font-weight:700">Node 14</text>
+        <text x="405" y="30" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#475569">Files 4666–4999</text>
+        <text x="405" y="42" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#64748b">→ shard.14.00000.mds.zstd</text>
+        <text x="405" y="54" text-anchor="middle" style="font-family:'Source Code Pro';font-size:8px;fill:#64748b">→ shard.14.02600.mds.zstd</text>
+
+        <!-- Converge arrows -->
+        <line x1="65" y1="66" x2="280" y2="100" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2"/>
+        <line x1="207" y1="66" x2="280" y2="100" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2"/>
+        <line x1="405" y1="66" x2="280" y2="100" stroke="#94a3b8" stroke-width="1" stroke-dasharray="3,2"/>
+      </g>
+
+      <!-- Index merge -->
+      <rect x="195" y="250" width="220" height="50" rx="8" fill="#fef3c7" stroke="#f59e0b" stroke-width="1.5"/>
+      <text x="305" y="268" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#92400e;font-weight:700">Index Merge (Leader Node)</text>
+      <text x="305" y="284" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#92400e">15 local index.json → 1 master manifest</text>
+
+      <line x1="305" y1="300" x2="305" y2="318" stroke="#f59e0b" stroke-width="1.5" marker-end="url(#a2)"/>
+
+      <!-- Output -->
+      <rect x="150" y="322" width="310" height="46" rx="8" fill="#f0fdf4" stroke="#1a8917" stroke-width="2"/>
+      <text x="305" y="340" text-anchor="middle" style="font-family:Inter;font-size:11px;fill:#166534;font-weight:700">✅ 39,094 shards + unified index.json</text>
+      <text x="305" y="356" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#15803d">Uploaded to S3 · Ready for training & validation</text>
+
+      <!-- Quality gate -->
+      <rect x="490" y="250" width="170" height="50" rx="8" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
+      <text x="575" y="268" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#991b1b;font-weight:700">🔍 Quality Gate</text>
+      <text x="575" y="284" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#991b1b">tokenization_report.txt</text>
+
+      <line x1="415" y1="275" x2="488" y2="275" stroke="#fca5a5" stroke-width="1" stroke-dasharray="3,2"/>
+    </svg>
+    <div class="diagram-caption">Fig 4. The tokenization pipeline distributes work across 15 nodes, each producing rank-prefixed shards, then merges indices into a single manifest.</div>
+  </div>
+
+  <p>
+    A critical design choice: <strong>images are embedded as Base64 directly into each sample</strong>. Raw samples contain cloud storage URIs pointing to images. During tokenization, each image is downloaded, JPEG-compressed, and Base64-encoded into the sample payload. The resulting MDS samples are fully self-contained — at training time, zero network calls are needed to image storage. This is what makes the checkpoint resume truly restart-safe: if the job resumes, it doesn't need to re-download any images.
+  </p>
+
+  <div class="callout warning">
+    <div class="callout-title">Trade-off: Embedded Base64 Images</div>
+    <p style="margin-bottom:10px;">Embedding images as Base64 is a deliberate trade-off, not a free lunch. Base64 encoding adds <strong>~33% size overhead</strong> compared to raw binary, and <code>base64.b64decode()</code> + <code>PIL.Image.open()</code> on every sample adds CPU work to the DataLoader. The larger per-sample size also means larger shards, though zstd compression reclaims much of the Base64 overhead (we saw ~30% compression ratio).</p>
+    <p style="margin-bottom:10px;"><strong>Why it was worth it at our scale:</strong> The alternative — keeping images as separate S3 objects and fetching at training time — would reintroduce the exact latency problem we built this architecture to solve. With 600M image references and multi-week training across node failures, the operational cost of re-downloading images on every restart far exceeded the ~33% storage overhead. Self-contained samples also simplified our DataLoader to pure local I/O — no S3 clients, no retry logic, no rate limiting in the hot path.</p>
+    <p style="margin-bottom:0;"><strong>When you might not do this:</strong> If your images are very high-resolution (e.g., medical imaging at 100+ MB/image), the Base64 overhead and shard sizes may become prohibitive. Similarly, if your pipeline relies on heavy stochastic augmentations that need raw pixel access before encoding, or if storage costs are a binding constraint, keeping images as separate objects with a smart caching layer (e.g., NVIDIA DALI + GDS) may be preferable.</p>
+  </div>
+
+  <p>
+    After all nodes complete, a leader node merges the 15 local <code>index.json</code> files into a single master manifest covering all 39K shards, and uploads it to S3. A quality-gate report validates sample counts, image download success rates, and per-node statistics before training is cleared to begin.
+  </p>
+
+  <div class="section-divider"></div>
+
+  <!-- Section 5: Training Pipeline -->
+  <h2>Pipeline 2: Distributed Training at Scale</h2>
+
+  <p>
+    With the tokenized data sitting in S3 as self-contained shards, the training pipeline streams it on-demand to 160 H100 GPUs across 20 nodes. Here's how the data flows.
+  </p>
+
+  <h3>Deterministic shard assignment</h3>
+  <p>
+    MDS uses a simple, deterministic scheme based on <code>global_rank</code>: GPU 0 gets shards {0, 160, 320, ...}, GPU 1 gets {1, 161, 321, ...}, and so on. Assuming consistent seeds and per-rank partitioning (which MDS manages automatically), this guarantees <strong>each rank sees a disjoint subset of samples per epoch</strong> — perfect data parallelism with zero coordination overhead.
+  </p>
+
+  <!-- GPU Shard Assignment Diagram -->
+  <div class="diagram-container">
+    <div class="diagram-title">Deterministic Shard Distribution Across 160 GPUs</div>
+    <svg width="680" height="300" viewBox="0 0 680 300" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a3" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#3b82f6"/>
+        </marker>
+      </defs>
+
+      <!-- S3 shards at top -->
+      <rect x="140" y="10" width="400" height="40" rx="8" fill="#f0fdf4" stroke="#1a8917" stroke-width="1.5"/>
+      <text x="340" y="34" text-anchor="middle" style="font-family:Inter;font-size:11px;fill:#166534;font-weight:600">☁️ S3: 39,094 MDS Shards</text>
+
+      <!-- Arrows down -->
+      <line x1="200" y1="50" x2="200" y2="76" stroke="#3b82f6" stroke-width="1.5" marker-end="url(#a3)"/>
+      <line x1="340" y1="50" x2="340" y2="76" stroke="#3b82f6" stroke-width="1.5" marker-end="url(#a3)"/>
+      <line x1="480" y1="50" x2="480" y2="76" stroke="#3b82f6" stroke-width="1.5" marker-end="url(#a3)"/>
+
+      <!-- Node boxes -->
+      <!-- Node 0 -->
+      <rect x="40" y="82" width="250" height="110" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="165" y="100" text-anchor="middle" style="font-family:Inter;font-size:11px;fill:#1e40af;font-weight:700">Node 0 (8 GPUs)</text>
+
+      <g transform="translate(50, 108)">
+        <rect x="0" y="0" width="52" height="36" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1"/>
+        <text x="26" y="14" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#1e40af;font-weight:700">GPU 0</text>
+        <text x="26" y="28" text-anchor="middle" style="font-family:'Source Code Pro';font-size:7px;fill:#3b82f6">{0,160,320..}</text>
+
+        <rect x="58" y="0" width="52" height="36" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1"/>
+        <text x="84" y="14" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#1e40af;font-weight:700">GPU 1</text>
+        <text x="84" y="28" text-anchor="middle" style="font-family:'Source Code Pro';font-size:7px;fill:#3b82f6">{1,161,321..}</text>
+
+        <text x="126" y="18" text-anchor="middle" style="font-size:12px;fill:#94a3b8">···</text>
+
+        <rect x="142" y="0" width="52" height="36" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1"/>
+        <text x="168" y="14" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#1e40af;font-weight:700">GPU 7</text>
+        <text x="168" y="28" text-anchor="middle" style="font-family:'Source Code Pro';font-size:7px;fill:#3b82f6">{7,167,327..}</text>
+      </g>
+
+      <!-- NVMe -->
+      <rect x="60" y="152" width="210" height="24" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
+      <text x="165" y="168" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#92400e;font-weight:600">NVMe Cache: rolling 500 GB · LRU eviction</text>
+
+      <!-- Node 1 -->
+      <rect x="310" y="82" width="140" height="110" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="380" y="100" text-anchor="middle" style="font-family:Inter;font-size:11px;fill:#1e40af;font-weight:700">Node 1</text>
+      <g transform="translate(320, 108)">
+        <rect x="0" y="0" width="52" height="36" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1"/>
+        <text x="26" y="14" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#1e40af;font-weight:700">GPU 8</text>
+        <text x="26" y="28" text-anchor="middle" style="font-family:'Source Code Pro';font-size:7px;fill:#3b82f6">{8,168..}</text>
+        <text x="72" y="18" text-anchor="middle" style="font-size:12px;fill:#94a3b8">···</text>
+      </g>
+      <rect x="320" y="152" width="120" height="24" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
+      <text x="380" y="168" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#92400e;font-weight:600">500 GB cache</text>
+
+      <!-- Dots -->
+      <text x="470" y="140" text-anchor="middle" style="font-size:24px;fill:#94a3b8">···</text>
+
+      <!-- Node 19 -->
+      <rect x="500" y="82" width="160" height="110" rx="8" fill="#eff6ff" stroke="#3b82f6" stroke-width="1.5"/>
+      <text x="580" y="100" text-anchor="middle" style="font-family:Inter;font-size:11px;fill:#1e40af;font-weight:700">Node 19</text>
+      <g transform="translate(510, 108)">
+        <rect x="0" y="0" width="58" height="36" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1"/>
+        <text x="29" y="14" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#1e40af;font-weight:700">GPU 152</text>
+        <text x="29" y="28" text-anchor="middle" style="font-family:'Source Code Pro';font-size:7px;fill:#3b82f6">{152,..}</text>
+        <text x="78" y="18" text-anchor="middle" style="font-size:12px;fill:#94a3b8">···</text>
+        <rect x="88" y="0" width="52" height="36" rx="4" fill="#dbeafe" stroke="#93c5fd" stroke-width="1"/>
+        <text x="114" y="14" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#1e40af;font-weight:700">GPU 159</text>
+        <text x="114" y="28" text-anchor="middle" style="font-family:'Source Code Pro';font-size:7px;fill:#3b82f6">{159,..}</text>
+      </g>
+      <rect x="510" y="152" width="140" height="24" rx="4" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
+      <text x="580" y="168" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#92400e;font-weight:600">500 GB cache</text>
+
+      <!-- Key formula -->
+      <rect x="40" y="210" width="620" height="76" rx="8" fill="#f8fafc" stroke="#e2e8f0" stroke-width="1"/>
+      <text x="60" y="232" style="font-family:Inter;font-size:10px;fill:#64748b;font-weight:700">SHARD ASSIGNMENT FORMULA</text>
+      <text x="60" y="252" style="font-family:'Source Code Pro';font-size:13px;fill:#1e293b">my_shards = [i <tspan fill="#cba6f7">for</tspan> i <tspan fill="#cba6f7">in</tspan> range(num_shards) <tspan fill="#cba6f7">if</tspan> i % world_size == global_rank]</text>
+      <text x="60" y="274" style="font-family:Inter;font-size:10px;fill:#94a3b8">Guarantees: zero overlap · perfect parallelism · no coordination needed · deterministic across restarts</text>
+    </svg>
+    <div class="diagram-caption">Fig 5. Each GPU receives a deterministic, non-overlapping subset of shards based on its global rank.</div>
+  </div>
+
+  <h3>The data deserialization path</h3>
+  <p>
+    Each MDS sample arrives as a JSON string containing tokenized text (<code>input_ids</code>, <code>attention_mask</code>, <code>labels</code>) and Base64-encoded images. The deserialization path is: <code>json.loads()</code> → <code>base64.b64decode()</code> → <code>PIL.Image.open()</code>. The training framework's data collator then converts PIL images to <code>pixel_values</code> tensors via the vision processor, pads sequences, and moves everything to GPU. This on-the-fly deserialization adds negligible overhead while keeping samples self-contained in storage.
+  </p>
+
+  <h3>Prefetching hides latency</h3>
+  <p>
+    While the GPU processes current samples, the DataLoader prefetches the next shards in background threads. Combined with multiple S3 connections per node and NVMe caching, S3 latency becomes invisible to training — GPUs stay at full utilization throughout the run.
+  </p>
+
+  <div class="section-divider"></div>
+
+  <!-- Section 6: Checkpoint Resume -->
+  <h2>Fault Tolerance: Exact Resume After Node Failure</h2>
+
+  <p>
+    Over a three-week training run on 160 GPUs, hardware failures are not a question of "if" but "when." Our run encountered multiple node crashes. Each time, training resumed from the <strong>exact same loss value and global step</strong> — visible as seamless transitions in the W&B loss curve (each color representing a distinct run after a restart).
+  </p>
+
+  <p>
+    The math is straightforward. On restart, MDS reads <code>global_step</code> from the checkpoint's <code>trainer_state.json</code> and calculates:
+  </p>
+
+  <pre><code><span class="code-comment"># Checkpoint resume calculation</span>
+total_samples = global_step × batch_size × grad_accum × world_size
+            = <span class="code-number">500</span> × <span class="code-number">2</span> × <span class="code-number">8</span> × <span class="code-number">160</span>
+            = <span class="code-number">1,280,000</span>
+
+epoch    = total_samples // dataset_size   <span class="code-comment"># which epoch</span>
+position = total_samples %  dataset_size   <span class="code-comment"># position within epoch</span>
+
+<span class="code-comment"># Each GPU skips exactly (position / world_size) samples</span>
+<span class="code-comment"># → No wasted compute, no duplicate samples</span></code></pre>
+
+  <!-- Checkpoint Resume Diagram -->
+  <div class="diagram-container">
+    <div class="diagram-title">Node Failure Recovery: Sample-Level Checkpoint Resume</div>
+    <svg width="680" height="260" viewBox="0 0 680 260" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <marker id="a4" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#1a8917"/>
+        </marker>
+        <marker id="a4r" markerWidth="8" markerHeight="6" refX="8" refY="3" orient="auto">
+          <polygon points="0 0, 8 3, 0 6" fill="#ef4444"/>
+        </marker>
+      </defs>
+
+      <!-- Timeline -->
+      <line x1="40" y1="80" x2="640" y2="80" stroke="#e2e8f0" stroke-width="2"/>
+
+      <!-- Training progress -->
+      <rect x="40" y="68" width="260" height="24" rx="4" fill="#3b82f6"/>
+      <text x="170" y="84" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#fff;font-weight:600">Training Run 1 → step 1,500</text>
+
+      <!-- Crash -->
+      <text x="310" y="58" text-anchor="middle" style="font-size:20px">💥</text>
+      <text x="310" y="48" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#ef4444;font-weight:700">NODE CRASH</text>
+
+      <!-- Recovery steps -->
+      <rect x="320" y="108" width="140" height="36" rx="6" fill="#fef2f2" stroke="#fca5a5" stroke-width="1"/>
+      <text x="390" y="122" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#991b1b;font-weight:600">1. Find latest checkpoint</text>
+      <text x="390" y="136" text-anchor="middle" style="font-family:Inter;font-size:8px;fill:#991b1b">on S3 (trainer_state.json)</text>
+
+      <line x1="460" y1="126" x2="478" y2="126" stroke="#1a8917" stroke-width="1.5" marker-end="url(#a4)"/>
+
+      <rect x="486" y="108" width="140" height="36" rx="6" fill="#fef3c7" stroke="#fbbf24" stroke-width="1"/>
+      <text x="556" y="122" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#92400e;font-weight:600">2. Calculate position</text>
+      <text x="556" y="136" text-anchor="middle" style="font-family:'Source Code Pro';font-size:7px;fill:#92400e">step×batch×accum×gpus</text>
+
+      <!-- Resume -->
+      <rect x="340" y="68" width="300" height="24" rx="4" fill="#22c55e"/>
+      <text x="490" y="84" text-anchor="middle" style="font-family:Inter;font-size:10px;fill:#fff;font-weight:600">Training Run 2 → resumes at exact step 1,500</text>
+
+      <!-- MDS skip -->
+      <rect x="370" y="160" width="250" height="36" rx="6" fill="#e6f4e6" stroke="#1a8917" stroke-width="1"/>
+      <text x="495" y="174" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#166534;font-weight:600">3. MDS skips processed samples</text>
+      <text x="495" y="188" text-anchor="middle" style="font-family:Inter;font-size:8px;fill:#15803d">Each GPU skips position/world_size samples on first iter</text>
+
+      <!-- Result -->
+      <rect x="120" y="210" width="440" height="36" rx="8" fill="#f0fdf4" stroke="#1a8917" stroke-width="2"/>
+      <text x="340" y="228" text-anchor="middle" style="font-family:Inter;font-size:11px;fill:#166534;font-weight:700">✅ Same loss, same step, zero wasted GPU hours</text>
+      <text x="340" y="240" text-anchor="middle" style="font-family:Inter;font-size:9px;fill:#15803d">Visible as seamless color transitions in W&B loss graph</text>
+    </svg>
+    <div class="diagram-caption">Fig 6. On node failure, training resumes from the exact sample position — no re-computation, no data loss.</div>
+  </div>
+
+  <p>
+    This is one of MDS's most valuable features at scale. Without sample-level resume, each crash during a multi-week run would mean re-processing millions of samples — potentially adding days to the total wall-clock time.
+  </p>
+
+  <div class="callout">
+    <div class="callout-title">Resume checklist: what's stored in the checkpoint</div>
+    <p style="margin-bottom:8px;">For exact resumption to work, the checkpoint must capture the full state needed to reconstruct the data iterator position. In our setup, this means:</p>
+    <ul style="margin:0 0 0 18px;font-family:Inter,sans-serif;font-size:15px;line-height:1.8;color:#475569;">
+      <li><strong><code>global_step</code></strong> (from <code>trainer_state.json</code>) — used to compute total samples consumed</li>
+      <li><strong><code>batch_size</code>, <code>grad_accum</code>, <code>world_size</code></strong> — the multiplier constants for the sample arithmetic</li>
+      <li><strong>Shard shuffle seed</strong> — MDS uses a deterministic seed (typically derived from epoch number) to shuffle shard order per rank. The same seed on restart reproduces the same shard sequence.</li>
+      <li><strong>Epoch number</strong> — derived from <code>total_samples // dataset_size</code>, determines which shuffled ordering to use</li>
+      <li><strong>Model weights, optimizer state, scheduler state</strong> — standard PyTorch checkpoint contents</li>
+    </ul>
+    <p style="margin-top:8px;margin-bottom:0;">If any of these are missing or inconsistent (e.g., <code>world_size</code> changes between runs), the resume position will be incorrect. Keep the cluster topology fixed across restarts.</p>
+  </div>
+
+  <div class="section-divider"></div>
+
+  <!-- Section 7: Validation Pipeline -->
+  <h2>Pipeline 3: Continuous Validation</h2>
+
+  <p>
+    Validation runs on a <strong>separate 4-node, 32-GPU cluster</strong> — completely independent from training. It continuously polls S3 for new checkpoints (every 60 minutes, configurable), downloads them, and runs a forward pass on held-out data to compute validation loss. No text is generated — just loss metrics for checkpoint selection and overfitting detection.
+  </p>
+
+  <p>
+    Both training and validation log to the same Weights & Biases project using grouped runs (same <code>WANDB_RUN_GROUP</code>), so scientists see training loss and validation loss side-by-side on aligned step axes. If training loss decreases but validation loss increases — overfitting. Both decreasing — healthy learning.
+  </p>
+
+  <div class="callout">
+    <div class="callout-title">Why a separate cluster?</div>
+    If validation shared GPUs with training, it would pause the training loop — potentially adding days to a 3-week run. Running on a separate cluster means continuous monitoring with zero performance impact on training.
+  </div>
+
+  <div class="section-divider"></div>
+
+  <!-- Section 8: MLOps -->
+  <h2>Operational Model: One Image, YAML-Driven Experiments</h2>
+
+  <p>
+    A single Docker image supports all three pipelines. An <code>entrypoint.sh</code> script reads the <code>PIPELINE_TYPE</code> environment variable (tokenization, training, or evaluation) and routes to the correct script. All tunable hyperparameters — learning rate, batch size, epochs, LoRA rank — live in YAML files stored in cloud storage. Scientists iterate by changing only two files: <code>training.yaml</code> and <code>eval.yaml</code>. Upload to storage, submit a job with the YAML URI as an environment variable, and the same container image handles everything.
+  </p>
+
+  <p>
+    The result: <strong>rapid iteration without container rebuilds</strong>. The Docker image is built once and never modified for experiments. This is crucial when each training experiment takes weeks — the overhead of rebuilding and redeploying containers would be a significant bottleneck.
+  </p>
+
+  <div class="section-divider"></div>
+
+  <!-- Section 9: Comparison Table -->
+  <h2>MDS vs. Alternatives: Why We Chose MosaicML Streaming</h2>
+
+  <table class="comparison-table">
+    <thead>
+      <tr>
+        <th>Feature</th>
+        <th>MDS</th>
+        <th>HF Streaming</th>
+        <th>WebDataset</th>
+      </tr>
+    </thead>
+    <tbody>
+      <tr>
+        <td>Restart-safe iteration</td>
+        <td><span class="badge-good">✅ Sample-level</span></td>
+        <td><span class="badge-bad">❌ Epoch-level</span></td>
+        <td><span class="badge-bad">❌</span></td>
+      </tr>
+      <tr>
+        <td>Cloud-native (S3)</td>
+        <td><span class="badge-good">✅ First-class</span></td>
+        <td><span class="badge-good">✅</span></td>
+        <td><span class="badge-good">✅</span></td>
+      </tr>
+      <tr>
+        <td>Multi-node sharding</td>
+        <td><span class="badge-good">✅ Automatic</span></td>
+        <td>⚠️ Manual</td>
+        <td><span class="badge-good">✅</span></td>
+      </tr>
+      <tr>
+        <td>Built-in compression</td>
+        <td><span class="badge-good">✅ zstd</span></td>
+        <td><span class="badge-bad">❌</span></td>
+        <td><span class="badge-good">✅</span></td>
+      </tr>
+      <tr>
+        <td>Index-based seeking</td>
+        <td><span class="badge-good">✅ O(log S) + O(1)</span></td>
+        <td><span class="badge-bad">❌</span></td>
+        <td><span class="badge-bad">❌</span></td>
+      </tr>
+    </tbody>
+  </table>
+
+  <p>
+    The decisive factors for us were <strong>sample-level restart safety</strong> and <strong>automatic multi-node shard distribution</strong>. At 20+ TB and 3+ weeks of training, the ability to resume from any sample without re-streaming was non-negotiable. MDS's index-based seeking and deterministic shard assignment made it the clear choice.
+  </p>
+
+  <div class="section-divider"></div>
+
+  <!-- Conclusion -->
+  <h2>Key Takeaways</h2>
+
+  <div class="numbered-insight">
+    <div class="insight-number">1</div>
+    <div class="insight-content">
+      <div class="insight-title">Streaming-first beats download-first at scale</div>
+      <div class="insight-text">At 20+ TB, the dataset can't exist on any single node. MDS streaming with shard caching, prefetching, and bounded NVMe storage (~500 GB) transforms cloud storage latency into a deterministic, high-throughput data plane.</div>
+    </div>
+  </div>
+
+  <div class="numbered-insight">
+    <div class="insight-number">2</div>
+    <div class="insight-content">
+      <div class="insight-title">Make samples self-contained</div>
+      <div class="insight-text">Embedding images as Base64 during tokenization eliminates runtime dependencies on image storage. This single decision enables true restart-safety and dramatically simplifies the training loop.</div>
+    </div>
+  </div>
+
+  <div class="numbered-insight">
+    <div class="insight-number">3</div>
+    <div class="insight-content">
+      <div class="insight-title">Decouple CPU-bound and GPU-bound work</div>
+      <div class="insight-text">Tokenization (I/O-bound, 80 threads per node) and training (GPU-bound, 160 H100s) have fundamentally different resource profiles. Running them as independent pipelines lets each use optimal hardware and enables "tokenize once, train many."</div>
+    </div>
+  </div>
+
+  <div class="numbered-insight">
+    <div class="insight-number">4</div>
+    <div class="insight-content">
+      <div class="insight-title">Sample-level checkpointing is non-negotiable at scale</div>
+      <div class="insight-text">Over a 3-week run, node failures are guaranteed. MDS's ability to resume from the exact sample position — using simple arithmetic on global_step, batch_size, and world_size — saved thousands of GPU-hours and kept the run on schedule.</div>
+    </div>
+  </div>
+
+  <div class="numbered-insight">
+    <div class="insight-number">5</div>
+    <div class="insight-content">
+      <div class="insight-title">Invest in observability from day one</div>
+      <div class="insight-text">Grouped W&B runs for training and validation, quality-gate reports after tokenization, and unified dashboards made it possible to monitor a multi-week, multi-pipeline system without going insane.</div>
+    </div>
+  </div>
+
+  <p style="margin-top: 40px;">
+    Building ML infrastructure at this scale is an exercise in managing complexity through simplicity. Each component — the shard format, the index, the deterministic assignment, the checkpoint arithmetic — is individually simple. The challenge is composing them into a system that runs reliably for weeks at a time, across hundreds of GPUs, on petabytes of data. MosaicML Streaming gave us a solid foundation; the decoupled architecture gave us operational resilience. Together, they made it possible to focus on what actually matters: the science.
+  </p>
+
+  <div class="section-divider"></div>
+
+  <!-- Further Reading -->
+  <h2>Further Reading &amp; References</h2>
+
+  <div style="font-family:Inter,sans-serif;font-size:15px;line-height:1.8;color:var(--text-secondary);">
+    <p style="margin-bottom:16px;"><strong>MosaicML Streaming</strong></p>
+    <ul style="margin:0 0 20px 18px;">
+      <li><a href="https://github.com/mosaicml/streaming" style="color:var(--accent);text-decoration:none;">GitHub: mosaicml/streaming</a> — Source code, API docs, and examples</li>
+      <li><a href="https://docs.mosaicml.com/projects/streaming/en/stable/" style="color:var(--accent);text-decoration:none;">Official Documentation</a> — Configuration reference, performance tuning, and architecture overview</li>
+      <li><a href="https://www.mosaicml.com/blog/mosaicml-streaming" style="color:var(--accent);text-decoration:none;">MosaicML Blog: Streaming Datasets</a> — Original design rationale and benchmarks</li>
+    </ul>
+
+    <p style="margin-bottom:16px;"><strong>Alternative streaming libraries</strong> (referenced in the comparison table)</p>
+    <ul style="margin:0 0 20px 18px;">
+      <li><a href="https://huggingface.co/docs/datasets/stream" style="color:var(--accent);text-decoration:none;">HuggingFace Datasets Streaming</a></li>
+      <li><a href="https://github.com/webdataset/webdataset" style="color:var(--accent);text-decoration:none;">WebDataset</a></li>
+    </ul>
+
+    <p style="margin-bottom:16px;"><strong>Related topics</strong></p>
+    <ul style="margin:0 0 20px 18px;">
+      <li><a href="https://pytorch.org/docs/stable/distributed.html" style="color:var(--accent);text-decoration:none;">PyTorch Distributed (DDP)</a> — The parallelism strategy used in training</li>
+      <li><a href="https://github.com/linkedin/Liger-Kernel" style="color:var(--accent);text-decoration:none;">Liger Kernel</a> — Triton-based kernel optimizations referenced in our training config</li>
+      <li><a href="https://qwenlm.github.io/blog/qwen2.5-vl/" style="color:var(--accent);text-decoration:none;">Qwen2.5-VL</a> — The base vision-language model architecture</li>
+    </ul>
+  </div>
+
+  <div class="section-divider"></div>
+
+  <!-- Footer -->
+  <div class="article-footer">
+    <div class="tag-list">
+      <span class="tag-pill">Machine Learning</span>
+      <span class="tag-pill">MLOps</span>
+      <span class="tag-pill">Distributed Systems</span>
+      <span class="tag-pill">Vision-Language Models</span>
+      <span class="tag-pill">Data Engineering</span>
+      <span class="tag-pill">GPU Infrastructure</span>
+    </div>
+  </div>
+
+</article>
+
+</body>
+</html>
