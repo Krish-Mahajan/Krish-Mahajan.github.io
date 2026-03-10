@@ -1,0 +1,1501 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Before the First Gradient: Standing Up a 160-GPU Training Cluster on AWS</title>
+    <meta name="description"
+        content="How we provisioned, networked, and orchestrated 20 P5 GPU nodes into a single distributed training job — before the first gradient ever flowed.">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400&family=Inter:wght@400;500;600;700&family=Source+Code+Pro:wght@400;500&display=swap"
+        rel="stylesheet">
+    <style>
+        :root {
+            --accent: #1a8917;
+            --accent-light: #e8f5e8;
+            --text: #242424;
+            --text-secondary: #6b6b6b;
+            --bg: #ffffff;
+            --code-bg: #1e1e2e;
+            --border: #e6e6e6;
+            --callout-bg: #f2f2f2;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Lora', Georgia, serif;
+            color: var(--text);
+            background: var(--bg);
+            line-height: 1.78;
+            font-size: 18px;
+        }
+
+        .article-container {
+            max-width: 728px;
+            margin: 0 auto;
+            padding: 40px 24px 80px;
+        }
+
+        .article-meta {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 24px;
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            color: var(--text-secondary);
+        }
+
+        .category-tag {
+            background: var(--accent-light);
+            color: var(--accent);
+            padding: 4px 12px;
+            border-radius: 100px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            font-size: 11px;
+        }
+
+        .author-row {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            margin-bottom: 32px;
+        }
+
+        .author-avatar {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            background: linear-gradient(135deg, #667eea, #764ba2);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            color: #fff;
+            font-family: 'Inter', sans-serif;
+            font-weight: 700;
+            font-size: 16px;
+        }
+
+        .author-info {
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+        }
+
+        .author-name {
+            font-weight: 600;
+            color: var(--text);
+        }
+
+        .author-date {
+            color: var(--text-secondary);
+            font-size: 13px;
+        }
+
+        h1 {
+            font-family: 'Lora', serif;
+            font-size: 40px;
+            line-height: 1.2;
+            font-weight: 700;
+            margin-bottom: 16px;
+            letter-spacing: -0.02em;
+        }
+
+        .subtitle {
+            font-size: 22px;
+            color: var(--text-secondary);
+            line-height: 1.5;
+            margin-bottom: 32px;
+            font-family: 'Lora', serif;
+        }
+
+        h2 {
+            font-family: 'Lora', serif;
+            font-size: 28px;
+            font-weight: 700;
+            margin-top: 48px;
+            margin-bottom: 16px;
+            letter-spacing: -0.01em;
+        }
+
+        h3 {
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            color: var(--text-secondary);
+            margin-top: 32px;
+            margin-bottom: 12px;
+        }
+
+        p {
+            margin-bottom: 24px;
+        }
+
+        .callout {
+            border-left: 3px solid var(--accent);
+            background: var(--callout-bg);
+            padding: 20px 24px;
+            margin: 24px 0;
+            border-radius: 0 8px 8px 0;
+            font-size: 16px;
+            line-height: 1.7;
+        }
+
+        .callout.tldr {
+            border-left-color: #1a3a5c;
+            background: #f0f4f8;
+        }
+
+        .callout.warning {
+            border-left-color: #e67e22;
+            background: #fef9f0;
+        }
+
+        .callout strong {
+            font-weight: 700;
+        }
+
+        .callout ul {
+            margin: 12px 0 0 20px;
+            padding: 0;
+        }
+
+        .callout li {
+            margin-bottom: 8px;
+        }
+
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 16px;
+            margin: 32px 0;
+        }
+
+        .stat-card {
+            background: #f8f9fa;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 20px 16px;
+            text-align: center;
+        }
+
+        .stat-number {
+            font-family: 'Inter', sans-serif;
+            font-size: 28px;
+            font-weight: 700;
+            color: var(--accent);
+            display: block;
+        }
+
+        .stat-label {
+            font-family: 'Inter', sans-serif;
+            font-size: 12px;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+            margin-top: 4px;
+            display: block;
+        }
+
+        pre {
+            background: var(--code-bg);
+            color: #cdd6f4;
+            padding: 24px;
+            border-radius: 12px;
+            overflow-x: auto;
+            margin: 24px 0;
+            font-family: 'Source Code Pro', monospace;
+            font-size: 14px;
+            line-height: 1.6;
+        }
+
+        code {
+            font-family: 'Source Code Pro', monospace;
+            font-size: 15px;
+        }
+
+        p code,
+        li code,
+        td code {
+            background: #f0f0f0;
+            color: #d63384;
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-size: 15px;
+        }
+
+        .code-comment {
+            color: #6c7086;
+            font-style: italic;
+        }
+
+        .code-keyword {
+            color: #cba6f7;
+        }
+
+        .code-string {
+            color: #a6e3a1;
+        }
+
+        .code-function {
+            color: #89b4fa;
+        }
+
+        .code-variable {
+            color: #f9e2af;
+        }
+
+        .comparison-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 24px 0;
+            font-family: 'Inter', sans-serif;
+            font-size: 14px;
+        }
+
+        .comparison-table th {
+            background: #f8f9fa;
+            padding: 12px 16px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid var(--border);
+            font-size: 12px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .comparison-table td {
+            padding: 12px 16px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        .comparison-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+        }
+
+        .badge-good {
+            background: #e8f5e8;
+            color: #1a8917;
+        }
+
+        .badge-bad {
+            background: #fef0f0;
+            color: #c0392b;
+        }
+
+        .badge-warn {
+            background: #fef9f0;
+            color: #e67e22;
+        }
+
+        .badge-neutral {
+            background: #f0f0f0;
+            color: #6b6b6b;
+        }
+
+        .section-divider {
+            width: 48px;
+            height: 3px;
+            background: var(--text);
+            margin: 48px auto;
+            border: none;
+        }
+
+        .diagram-container {
+            background: #f8f9fa;
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 32px;
+            margin: 32px 0;
+            text-align: center;
+        }
+
+        .diagram-container .diagram-caption {
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            color: var(--text-secondary);
+            margin-top: 16px;
+        }
+
+        .numbered-insight {
+            display: flex;
+            gap: 16px;
+            margin: 24px 0;
+            align-items: flex-start;
+        }
+
+        .insight-number {
+            flex-shrink: 0;
+            width: 36px;
+            height: 36px;
+            background: var(--accent);
+            color: white;
+            border-radius: 50%;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-family: 'Inter', sans-serif;
+            font-weight: 700;
+            font-size: 16px;
+        }
+
+        .insight-content {
+            flex: 1;
+        }
+
+        .insight-content strong {
+            display: block;
+            font-family: 'Inter', sans-serif;
+            font-size: 15px;
+            margin-bottom: 4px;
+        }
+
+        .insight-content p {
+            font-size: 16px;
+            margin-bottom: 0;
+        }
+
+        .audience-note {
+            font-family: 'Inter', sans-serif;
+            font-size: 15px;
+            color: var(--text-secondary);
+            font-style: italic;
+            margin-bottom: 32px;
+        }
+
+        .audience-note strong {
+            color: var(--text);
+            font-style: normal;
+        }
+
+        .tag-list {
+            display: flex;
+            flex-wrap: wrap;
+            gap: 8px;
+            margin: 32px 0;
+        }
+
+        .tag-pill {
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            padding: 6px 14px;
+            border-radius: 100px;
+            border: 1px solid var(--border);
+            color: var(--text-secondary);
+        }
+
+        .references {
+            font-family: 'Inter', sans-serif;
+            font-size: 15px;
+            line-height: 1.7;
+        }
+
+        .references a {
+            color: var(--accent);
+            text-decoration: none;
+        }
+
+        .references a:hover {
+            text-decoration: underline;
+        }
+
+        .references ul {
+            list-style: none;
+            padding: 0;
+        }
+
+        .references li {
+            margin-bottom: 8px;
+            padding-left: 16px;
+            position: relative;
+        }
+
+        .references li::before {
+            content: '\2192';
+            position: absolute;
+            left: 0;
+            color: var(--accent);
+        }
+
+        .series-banner {
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+            background: #f0f4f8;
+            border: 1px solid #d0dce8;
+            border-radius: 8px;
+            padding: 12px 16px;
+            margin-bottom: 24px;
+            color: var(--text-secondary);
+        }
+
+        .series-banner a {
+            color: var(--accent);
+            text-decoration: none;
+            font-weight: 600;
+        }
+
+        .series-banner a:hover {
+            text-decoration: underline;
+        }
+
+        .ownership-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 24px 0;
+            font-family: 'Inter', sans-serif;
+            font-size: 13px;
+        }
+
+        .ownership-table th {
+            background: #f8f9fa;
+            padding: 10px 12px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid var(--border);
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.04em;
+        }
+
+        .ownership-table td {
+            padding: 10px 12px;
+            border-bottom: 1px solid var(--border);
+            vertical-align: top;
+        }
+
+        .checkmark {
+            color: var(--accent);
+            font-weight: 700;
+        }
+
+        .xmark {
+            color: #c0392b;
+            font-weight: 700;
+        }
+
+        @media (max-width: 600px) {
+            h1 {
+                font-size: 28px;
+            }
+
+            .stats-grid {
+                grid-template-columns: repeat(2, 1fr);
+            }
+
+            .subtitle {
+                font-size: 18px;
+            }
+        }
+    </style>
+</head>
+
+<body>
+    <article class="article-container">
+
+        <div class="article-meta">
+            <span class="category-tag">Infrastructure</span>
+            <span>25 min read</span>
+        </div>
+
+        <h1>Before the First Gradient: Standing Up a 160-GPU Training Cluster on AWS</h1>
+        <p class="subtitle">How we provisioned, networked, and orchestrated 20 GPU nodes
+            into a single distributed training job &mdash; before the first gradient ever flowed.</p>
+
+        <div class="author-row">
+            <div class="author-avatar">KM</div>
+            <div class="author-info">
+                <div class="author-name">Krishna Mahajan</div>
+                <div class="author-date">March 2026 &middot; ML Infrastructure</div>
+            </div>
+        </div>
+
+        <div class="series-banner">
+            &#128206; <strong>Part 2 of 2</strong> &mdash; This post covers the <em>infrastructure plane</em> (how the
+            cluster forms). Part 1 covered the <a
+                href="https://krish-mahajan.github.io/blog/streaming-architecture/">data plane</a> (how 20 TB of
+            multimodal data streams to GPUs).
+        </div>
+
+        <div class="callout tldr">
+            <strong>TL;DR</strong>
+            <ul>
+                <li>AWS Batch provisions nodes and injects identity &mdash; but <strong>every networking, NCCL, and
+                        coordination variable</strong> is configured by engineers in shell
+                    scripts and Dockerfiles.</li>
+                <li>EFA (Elastic Fabric Adapter) enables OS-bypass, RDMA-like networking that makes multi-node GPU
+                    collectives fast &mdash; but only if 15+ environment variables are set correctly.</li>
+                <li>A simple <code>netcat</code> TCP probe barrier, written in bash, solved the hardest operational
+                    problem: nodes booting at different times.</li>
+                <li>Most cluster failures present as <strong>silent hangs</strong>, not error messages. The debugging
+                    section is the most bookmarkable part of this post.</li>
+            </ul>
+        </div>
+
+        <p class="audience-note"><strong>Who is this for:</strong> ML infrastructure engineers, platform engineers
+            provisioning GPU clusters, distributed training practitioners, and applied scientists who use multi-node
+            training but want to understand what happens before <code>torchrun</code> starts.</p>
+
+        <p>In <a href="https://krish-mahajan.github.io/blog/streaming-architecture/">Part 1</a>, I described how we
+            streamed 20+ TB of multimodal data
+            to 160 H100 GPUs using MosaicML Streaming &mdash; the <em>data plane</em>. That post assumed the cluster was
+            already up and running. This post fills in the other half: how 20 independent GPU nodes became a single,
+            coordinated distributed training job.</p>
+
+        <p>This is the infrastructure that sits beneath the loss curve. None of it is visible in training logs or
+            W&amp;B dashboards, but every piece must be correct before the first <code>loss.backward()</code> call can
+            succeed across 160 GPUs. Getting even one environment variable wrong doesn't produce an error &mdash; it
+            produces a hang that wastes hours of GPU time.</p>
+
+        <p>I'll walk through the complete cluster bring-up sequence: from hardware provisioning to the moment the first
+            gradient flows across 20 nodes. For each step, I'll be explicit about what AWS Batch provides automatically
+            versus what we had to build and configure ourselves.</p>
+
+        <div class="stats-grid">
+            <div class="stat-card">
+                <span class="stat-number">20</span>
+                <span class="stat-label">P5 Nodes</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-number">160</span>
+                <span class="stat-label">H100 GPUs</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-number">3200</span>
+                <span class="stat-label">Gbps EFA</span>
+            </div>
+            <div class="stat-card">
+                <span class="stat-number">15+</span>
+                <span class="stat-label">Env Vars Set</span>
+            </div>
+        </div>
+
+        <hr class="section-divider">
+
+        <!-- ===== SECTION 1: HARDWARE ===== -->
+        <h2>The Hardware: What a Multi-Node GPU Cluster Actually Looks Like</h2>
+
+        <p>The training cluster runs on AWS <strong>p5.48xlarge</strong> instances &mdash; the highest-performance GPU
+            instance type in EC2 at the time of deployment. Each node packs:</p>
+        <ul style="font-size:17px; line-height:1.9; margin: 0 0 24px 20px;">
+            <li><strong>8&times; NVIDIA H100 SXM5 GPUs</strong> (80 GB HBM3 each, 640 GB total GPU memory per node)</li>
+            <li><strong>NVSwitch fabric</strong> at 900 GB/s bidirectional bandwidth between any two GPUs on the same
+                node</li>
+            <li><strong>192 vCPUs</strong> and <strong>2 TB system memory</strong></li>
+            <li><strong>8 TB local NVMe SSD</strong> (8&times; 1 TB drives) for high-speed scratch storage</li>
+            <li><strong>32&times; Elastic Fabric Adapter (EFA) network interfaces</strong> delivering <strong>3,200 Gbps
+                    aggregate bandwidth</strong> for inter-node GPU collectives</li>
+        </ul>
+
+        <p>Twenty of these nodes provide 160 H100 GPUs. The distinction between intra-node and inter-node communication
+            is fundamental to everything that follows:</p>
+
+        <div class="callout">
+            <strong>Intra-node</strong> (GPUs 0&ndash;7 on the same machine): NVSwitch provides direct GPU-to-GPU
+            transfers at 900 GB/s. This is essentially free &mdash; no network stack involved.<br><br>
+            <strong>Inter-node</strong> (any GPU talking to a GPU on a different machine): Traffic must traverse the EFA
+            network. Fast (3200 Gbps), but orders of magnitude slower than NVSwitch and requires correct driver,
+            protocol, and environment variable configuration.
+        </div>
+
+        <!-- Diagram: NVSwitch vs EFA topology -->
+        <figure style="margin: 32px 0; text-align: center;">
+            <svg viewBox="0 0 740 300" xmlns="http://www.w3.org/2000/svg"
+                style="max-width:100%; font-family:'Inter',sans-serif; display:block; margin:0 auto;">
+                <!-- Node A -->
+                <rect x="20" y="30" width="300" height="240" rx="12" fill="#f0f4ff" stroke="#2563EB" stroke-width="2" />
+                <text x="170" y="22" text-anchor="middle" font-size="13" font-weight="600" fill="#1e3a5f">Node 0
+                    (p5.48xlarge)</text>
+                <!-- GPUs A row 1 -->
+                <rect x="40" y="50" width="54" height="34" rx="6" fill="#2563EB" /><text x="67" y="72"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 0</text>
+                <rect x="108" y="50" width="54" height="34" rx="6" fill="#2563EB" /><text x="135" y="72"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 1</text>
+                <rect x="176" y="50" width="54" height="34" rx="6" fill="#2563EB" /><text x="203" y="72"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 2</text>
+                <rect x="244" y="50" width="54" height="34" rx="6" fill="#2563EB" /><text x="271" y="72"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 3</text>
+                <!-- GPUs A row 2 -->
+                <rect x="40" y="100" width="54" height="34" rx="6" fill="#2563EB" /><text x="67" y="122"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 4</text>
+                <rect x="108" y="100" width="54" height="34" rx="6" fill="#2563EB" /><text x="135" y="122"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 5</text>
+                <rect x="176" y="100" width="54" height="34" rx="6" fill="#2563EB" /><text x="203" y="122"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 6</text>
+                <rect x="244" y="100" width="54" height="34" rx="6" fill="#2563EB" /><text x="271" y="122"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 7</text>
+                <!-- NVSwitch box A -->
+                <rect x="60" y="155" width="200" height="36" rx="8" fill="#16a34a" />
+                <text x="160" y="178" text-anchor="middle" font-size="12" fill="white" font-weight="700">NVSwitch · 900
+                    GB/s</text>
+                <!-- Lines GPU→NVSwitch A -->
+                <line x1="67" y1="134" x2="110" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.6" />
+                <line x1="135" y1="134" x2="140" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.6" />
+                <line x1="203" y1="134" x2="185" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.6" />
+                <line x1="271" y1="134" x2="215" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.6" />
+                <line x1="67" y1="84" x2="110" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.4" />
+                <line x1="135" y1="84" x2="140" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.4" />
+                <line x1="203" y1="84" x2="185" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.4" />
+                <line x1="271" y1="84" x2="215" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.4" />
+                <!-- EFA label A -->
+                <rect x="60" y="210" width="200" height="36" rx="8" fill="#f59e0b" opacity="0.15" stroke="#f59e0b"
+                    stroke-width="1.5" />
+                <text x="160" y="233" text-anchor="middle" font-size="12" fill="#92400e" font-weight="600">32× EFA
+                    interfaces</text>
+
+                <!-- Node B -->
+                <rect x="420" y="30" width="300" height="240" rx="12" fill="#f0f4ff" stroke="#2563EB"
+                    stroke-width="2" />
+                <text x="570" y="22" text-anchor="middle" font-size="13" font-weight="600" fill="#1e3a5f">Node 1 … Node
+                    19</text>
+                <rect x="440" y="50" width="54" height="34" rx="6" fill="#2563EB" /><text x="467" y="72"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 0</text>
+                <rect x="508" y="50" width="54" height="34" rx="6" fill="#2563EB" /><text x="535" y="72"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 1</text>
+                <rect x="576" y="50" width="54" height="34" rx="6" fill="#2563EB" /><text x="603" y="72"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 2</text>
+                <rect x="644" y="50" width="54" height="34" rx="6" fill="#2563EB" /><text x="671" y="72"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 3</text>
+                <rect x="440" y="100" width="54" height="34" rx="6" fill="#2563EB" /><text x="467" y="122"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 4</text>
+                <rect x="508" y="100" width="54" height="34" rx="6" fill="#2563EB" /><text x="535" y="122"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 5</text>
+                <rect x="576" y="100" width="54" height="34" rx="6" fill="#2563EB" /><text x="603" y="122"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 6</text>
+                <rect x="644" y="100" width="54" height="34" rx="6" fill="#2563EB" /><text x="671" y="122"
+                    text-anchor="middle" font-size="11" fill="white" font-weight="600">GPU 7</text>
+                <rect x="460" y="155" width="200" height="36" rx="8" fill="#16a34a" />
+                <text x="560" y="178" text-anchor="middle" font-size="12" fill="white" font-weight="700">NVSwitch · 900
+                    GB/s</text>
+                <line x1="467" y1="134" x2="510" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.6" />
+                <line x1="535" y1="134" x2="540" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.6" />
+                <line x1="603" y1="134" x2="585" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.6" />
+                <line x1="671" y1="134" x2="615" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.6" />
+                <line x1="467" y1="84" x2="510" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.4" />
+                <line x1="535" y1="84" x2="540" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.4" />
+                <line x1="603" y1="84" x2="585" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.4" />
+                <line x1="671" y1="84" x2="615" y2="155" stroke="#16a34a" stroke-width="1.5" opacity="0.4" />
+                <rect x="460" y="210" width="200" height="36" rx="8" fill="#f59e0b" opacity="0.15" stroke="#f59e0b"
+                    stroke-width="1.5" />
+                <text x="560" y="233" text-anchor="middle" font-size="12" fill="#92400e" font-weight="600">32× EFA
+                    interfaces</text>
+
+                <!-- EFA inter-node link -->
+                <line x1="320" y1="228" x2="420" y2="228" stroke="#f59e0b" stroke-width="3" stroke-dasharray="8,4" />
+                <text x="370" y="218" text-anchor="middle" font-size="12" font-weight="700" fill="#92400e">EFA</text>
+                <text x="370" y="248" text-anchor="middle" font-size="11" fill="#92400e">3,200 Gbps</text>
+                <!-- arrows -->
+                <polygon points="420,224 410,220 410,228" fill="#f59e0b" />
+                <polygon points="320,224 330,220 330,228" fill="#f59e0b" />
+            </svg>
+            <figcaption style="font-size:13px; color:#4a5568; margin-top:10px;">Within a node, GPUs communicate over
+                NVSwitch at 900 GB/s. Across nodes, traffic must cross EFA at~160 GB/s effective per GPU &mdash; orders
+                of magnitude slower. Getting this boundary right is the central challenge of multi-node training.
+            </figcaption>
+        </figure>
+
+        <p>The <code>Dockerfile</code> pre-creates a directory structure under <code>/tmp/instance_storage/</code>
+            for model downloads, Hugging Face cache, datasets, and tokenized data. At runtime, this path maps to the
+            local NVMe drives &mdash; giving each node 8 TB of high-speed scratch space that persists only for the
+            lifetime of the job.</p>
+
+        <hr class="section-divider">
+
+        <!-- ===== SECTION 2: ORCHESTRATOR COMPARISON ===== -->
+        <h2>Choosing an Orchestrator: AWS Batch vs. SageMaker vs. Ray</h2>
+
+        <p>Before writing a single line of shell script, our team had to make a foundational decision:
+            which orchestration layer manages the multi-node job lifecycle? The three realistic options on AWS are
+            <strong>AWS Batch</strong>, <strong>SageMaker Training Jobs</strong>, and <strong>Ray Train on EC2</strong>.
+            Each represents a different point on the control-vs-convenience spectrum.
+        </p>
+
+        <table class="comparison-table">
+            <thead>
+                <tr>
+                    <th>Dimension</th>
+                    <th>AWS Batch</th>
+                    <th>SageMaker Training</th>
+                    <th>Ray Train (EC2)</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>P5 / H100 instance support</td>
+                    <td><span class="badge badge-good">&#10003; Full</span></td>
+                    <td><span class="badge badge-bad">&#10007; Not available in our target region at the time</span>
+                    </td>
+                    <td><span class="badge badge-good">&#10003; Full (self-managed)</span></td>
+                </tr>
+                <tr>
+                    <td>Multi-node job setup</td>
+                    <td>Built-in via <code>numNodes</code></td>
+                    <td>Built-in via <code>instanceGroups</code></td>
+                    <td>Ray cluster YAML + Ray Train API</td>
+                </tr>
+                <tr>
+                    <td>EFA / NCCL configuration</td>
+                    <td><span class="badge badge-warn">Fully manual</span></td>
+                    <td><span class="badge badge-neutral">Partially managed</span></td>
+                    <td><span class="badge badge-warn">Fully manual</span></td>
+                </tr>
+                <tr>
+                    <td>Managed rendezvous / sync barrier</td>
+                    <td><span class="badge badge-bad">&#10007; None</span></td>
+                    <td><span class="badge badge-neutral">Partial</span></td>
+                    <td><span class="badge badge-good">&#10003; Ray handles it</span></td>
+                </tr>
+                <tr>
+                    <td>Fault tolerance</td>
+                    <td><span class="badge badge-bad">&#10007; Manual re-run</span></td>
+                    <td><span class="badge badge-neutral">Basic retry</span></td>
+                    <td><span class="badge badge-good">&#10003; Actor-level recovery</span></td>
+                </tr>
+                <tr>
+                    <td>Instance cost overhead</td>
+                    <td><span class="badge badge-good">EC2 pricing</span></td>
+                    <td><span class="badge badge-warn">SM surcharge applies</span></td>
+                    <td><span class="badge badge-good">EC2 pricing</span></td>
+                </tr>
+                <tr>
+                    <td>Operational complexity</td>
+                    <td><span class="badge badge-neutral">Low — familiar to most teams</span></td>
+                    <td><span class="badge badge-neutral">Medium</span></td>
+                    <td><span class="badge badge-warn">High if Ray is new to team</span></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <h3>Why AWS Batch Was Chosen</h3>
+
+        <div class="callout warning">
+            <strong>&#9888;&#65039; P5 Access: AWS Batch Only</strong><br><br>
+            <code>p5.48xlarge</code> instances (H100 GPUs) were available exclusively through AWS Batch in our
+            deployment environment. SageMaker Training Jobs did not support P5 instances in the target region at the
+            time of deployment. This single infrastructure constraint made the orchestrator decision straightforward
+            &mdash; SageMaker was not on the table.
+        </div>
+
+        <p><strong>Ray Train</strong> is a compelling long-term option. Its actor-based coordination model handles
+            rendezvous, synchronization barriers, and worker failure recovery natively — eliminating the bash-level
+            primitives described in later sections of this post. However, Ray had not been adopted within the team at
+            the time. Introducing it would have added a significant new dependency and operational surface area on top
+            of an already complex bringup.</p>
+
+        <p><strong>AWS Batch</strong> was already in the team's operational toolkit. It offers native multi-node job
+            support with the <code>AWS_BATCH_JOB_*</code> environment variables that slot directly into
+            <code>torchrun</code>, direct EC2 pricing with no managed overhead, and full control over every layer of the
+            networking stack.
+        </p>
+
+        <div class="callout warning">
+            <strong>&#9888;&#65039; The Price of Raw Control</strong><br><br>
+            AWS Batch gives engineers complete ownership of the cluster stack — but that
+            ownership is total. There is no managed rendezvous, no synchronization primitive, no built-in fault
+            tolerance. Every mechanism described in the remainder of this post — the 15+ EFA/NCCL environment variables,
+            the <code>nc&nbsp;-z</code> TCP barrier, the 3-hour rendezvous timeout — is the direct consequence of
+            choosing raw control over a managed abstraction.
+        </div>
+
+        <div class="callout">
+            <strong>Looking ahead: Ray on EC2</strong><br><br>
+            As the team and infrastructure mature, Ray Train is worth revisiting. <code>ray.train.TorchTrainer</code>
+            can replace the bash-level sync barrier and rendezvous timeout tuning with actor-based coordination. The
+            EFA/NCCL environment variable configuration remains necessary regardless of orchestrator — but everything
+            above that layer becomes significantly simpler.
+        </div>
+
+        <!-- ===== SECTION 3: CONTAINER IMAGE ===== -->
+        <h2>The Container Image: Building a GPU-Ready Training Environment</h2>
+
+        <p>Every piece of software that runs on the cluster &mdash; PyTorch, CUDA, flash-attention, LLaMA-Factory, even
+            the <code>netcat</code> utility we use for synchronization &mdash; is baked
+            into a single Docker image. AWS
+            Batch pulls and runs this image; we build, configure, and push it to AWS ECR for AWS Batch to pull.</p>
+
+        <h3>Base Image Selection</h3>
+
+        <p>We start from an AWS Deep Learning Container:
+            <code>pytorch-training:2.5.1-gpu-py311-cu124-ubuntu22.04-ec2</code>. This matters because the DLC comes with
+            pre-installed EFA drivers, NCCL, cuDNN, and a PyTorch build compiled against them. Starting from a generic
+            Ubuntu image would mean compiling these from source &mdash; a multi-hour build with easy-to-miss version
+            incompatibilities.
+        </p>
+
+        <h3>Layer-by-Layer Build</h3>
+
+        <pre>
+<span class="code-comment"># 1. Base: AWS DLC with PyTorch 2.5.1 + CUDA 12.4 + EFA drivers</span>
+<span class="code-keyword">FROM</span> 763104351884.dkr.ecr...amazonaws.com/pytorch-training:2.5.1-gpu-py311-cu124-ubuntu22.04-ec2
+
+<span class="code-comment"># 2. Python dependencies first (cache-friendly ordering)</span>
+<span class="code-keyword">COPY</span> ./LLaMA-Factory/requirements.txt ./LLaMA-Factory/requirements.txt
+<span class="code-keyword">RUN</span>  python3 -m pip install --no-cache-dir -r ./LLaMA-Factory/requirements.txt
+
+<span class="code-comment"># 3. Flash-attention compiled from source for target hardware</span>
+<span class="code-keyword">ENV</span>  FLASH_ATTENTION_FORCE_BUILD=TRUE
+<span class="code-keyword">RUN</span>  python3 -m pip install --no-cache-dir flash-attn --no-build-isolation
+
+<span class="code-comment"># 4. System deps &mdash; each serves a specific infra purpose</span>
+<span class="code-keyword">RUN</span>  apt-get install -y netcat-openbsd pigz rsync
+<span class="code-comment">#    netcat: TCP probe for the sync barrier (Section 7)</span>
+<span class="code-comment">#    pigz:   parallel gzip for model tarballs</span>
+
+<span class="code-comment"># 5. LLaMA-Factory in editable mode</span>
+<span class="code-keyword">RUN</span>  cd ./LLaMA-Factory &amp;&amp; pip install -e ".[metrics]"
+
+<span class="code-comment"># 6. AWS credential config baked into image</span>
+<span class="code-keyword">ENV</span>  AWS_CONFIG_FILE=/usr/local/bin/aws-config.txt
+</pre>
+
+        <p>Two decisions deserve emphasis. First, <code>flash-attn</code> is compiled from source
+            (<code>FLASH_ATTENTION_FORCE_BUILD=TRUE</code>) rather than installed from a wheel. Pre-built wheels may not
+            match the exact CUDA toolkit and GPU architecture on the target instances. Second, the image is built on an
+            EC2 instance, not locally &mdash; the flash-attention compilation requires a CUDA-capable build environment,
+            and the final image is too large for most developer machines.</p>
+
+
+        <hr class="section-divider">
+
+        <!-- ===== SECTION 3: EFA ===== -->
+        <h2>EFA: What It Is and Why It Matters for Multi-Node Training</h2>
+
+        <p>Elastic Fabric Adapter (EFA) is AWS's OS-bypass networking interface. Unlike standard VPC networking where
+            every packet traverses the kernel's TCP/IP stack, EFA allows applications to talk directly to the network
+            hardware &mdash; similar to InfiniBand RDMA in on-premise HPC clusters. For distributed GPU training, this
+            is the difference between tolerable inter-node communication and a system that spends more time waiting on
+            the network than computing gradients.</p>
+
+        <p>AWS Batch attaches EFA interfaces to your nodes if the compute environment is configured for it &mdash; but
+            we must tell NCCL and libfabric to actually <em>use</em> them. None of the
+            following variables are set automatically. Without them, NCCL falls back to TCP sockets over the standard
+            ENI &mdash; orders of magnitude slower.</p>
+
+        <pre>
+<span class="code-comment"># All of these are set by us in run_training_pipeline.sh</span>
+<span class="code-comment"># AWS Batch provides NONE of them.</span>
+
+<span class="code-comment"># Tell libfabric to use the EFA provider (not TCP sockets)</span>
+<span class="code-keyword">export</span> <span class="code-variable">FI_PROVIDER</span>=<span class="code-string">"efa"</span>
+
+<span class="code-comment"># Enable RDMA for direct GPU-to-GPU transfers across nodes</span>
+<span class="code-keyword">export</span> <span class="code-variable">FI_EFA_USE_DEVICE_RDMA</span>=<span class="code-string">1</span>
+
+<span class="code-comment"># Disable GDRCopy &mdash; prevents init errors where it's unsupported</span>
+<span class="code-keyword">export</span> <span class="code-variable">FI_EFA_GDR_READ_ENABLE</span>=<span class="code-string">0</span>
+
+<span class="code-comment"># Required for multi-worker DataLoaders that fork processes</span>
+<span class="code-keyword">export</span> <span class="code-variable">FI_EFA_FORK_SAFE</span>=<span class="code-string">1</span>
+<span class="code-keyword">export</span> <span class="code-variable">RDMAV_FORK_SAFE</span>=<span class="code-string">1</span>
+
+<span class="code-comment"># Restrict intra-node P2P to NVLink (fast), inter-node goes via EFA</span>
+<span class="code-keyword">export</span> <span class="code-variable">NCCL_P2P_LEVEL</span>=<span class="code-string">"NVL"</span>
+
+<span class="code-comment"># LL128 protocol &mdash; optimal for P5 instances with EFA</span>
+<span class="code-keyword">export</span> <span class="code-variable">NCCL_PROTO</span>=<span class="code-string">LL128</span>
+
+<span class="code-comment"># Bootstrap NIC selection &mdash; must match actual interface names</span>
+<span class="code-keyword">export</span> <span class="code-variable">NCCL_SOCKET_IFNAME</span>=<span class="code-string">"ens,eth0"</span>
+<span class="code-keyword">export</span> <span class="code-variable">GLOO_SOCKET_IFNAME</span>=<span class="code-string">"ens,eth0"</span>
+</pre>
+
+        <p>The most important variable is <code>FI_PROVIDER=efa</code>. If this isn't set, the job will silently fall
+            back to TCP &mdash; training will <em>work</em>, but collective operations will be 10&times; slower. Machine
+            Learning Infra engineers
+            actually set this to fail-fast: if the EFA provider can't be loaded, libfabric will error out rather than
+            silently degrading to sockets.</p>
+
+        <p><code>NCCL_P2P_LEVEL=NVL</code> tells NCCL to restrict peer-to-peer direct transfers to NVLink-connected GPUs
+            (i.e., same node only). Cross-node transfers are routed through EFA. This prevents NCCL from attempting
+            PCIe-based P2P across nodes, which would be catastrophically slow.</p>
+
+        <p><code>NCCL_PROTO=LL128</code> selects the Low-Latency 128-byte protocol, which is optimized for the EFA
+            network characteristics on P5 instances. The alternative (<code>Simple</code>) can be faster on InfiniBand
+            but performs worse on EFA's packet structure.</p>
+
+        <hr class="section-divider">
+
+        <!-- ===== SECTION 4: NODE DISCOVERY ===== -->
+        <h2>Node Discovery: How Nodes Find Each Other</h2>
+
+        <p>Before <code>torchrun</code> can assign ranks, nodes must know each other's existence and agree on a master
+            address. This is the "service discovery" problem for distributed training &mdash; and it's where the AWS
+            Batch &harr; your-code handoff is most explicit.</p>
+
+        <h3>What AWS Batch Gives You</h3>
+
+        <p>AWS Batch multi-node jobs automatically inject four environment variables into every container:</p>
+
+        <pre>
+<span class="code-comment"># Injected by AWS Batch &mdash; you do NOT set these</span>
+<span class="code-variable">AWS_BATCH_JOB_NUM_NODES</span>=<span class="code-string">20</span>
+<span class="code-variable">AWS_BATCH_JOB_NODE_INDEX</span>=<span class="code-string">0</span>       <span class="code-comment"># unique per node, 0-based</span>
+<span class="code-variable">AWS_BATCH_JOB_MAIN_NODE_INDEX</span>=<span class="code-string">0</span>
+<span class="code-variable">AWS_BATCH_JOB_MAIN_NODE_PRIVATE_IPV4_ADDRESS</span>=<span class="code-string">10.0.1.42</span>
+</pre>
+
+        <h3>What You Do With Them</h3>
+
+        <p>AWS Batch tells each node <em>who</em> is the main node and provides its IP. But PyTorch doesn't read AWS
+            Batch environment variables &mdash; it expects <code>MASTER_ADDR</code> and <code>MASTER_PORT</code>. This
+            translation is your responsibility:</p>
+
+        <pre>
+<span class="code-comment"># Our code in run_training_pipeline.sh &mdash; translates Batch vars to PyTorch vars</span>
+<span class="code-keyword">if</span> [ <span class="code-string">"${AWS_BATCH_JOB_NODE_INDEX}"</span> == <span class="code-string">"${AWS_BATCH_JOB_MAIN_NODE_INDEX}"</span> ]; <span class="code-keyword">then</span>
+    <span class="code-comment"># Main node resolves its own IP</span>
+    <span class="code-keyword">export</span> <span class="code-variable">MASTER_ADDR</span>=$(<span class="code-function">hostname</span> -i)
+<span class="code-keyword">else</span>
+    <span class="code-comment"># Workers read the main node's IP from Batch</span>
+    <span class="code-keyword">export</span> <span class="code-variable">MASTER_ADDR</span>=${AWS_BATCH_JOB_MAIN_NODE_PRIVATE_IPV4_ADDRESS}
+<span class="code-keyword">fi</span>
+<span class="code-keyword">export</span> <span class="code-variable">MASTER_PORT</span>=<span class="code-string">29500</span>
+</pre>
+
+
+        <hr class="section-divider">
+
+        <!-- ===== SECTION 5: RANK ASSIGNMENT ===== -->
+        <h2>Rank Assignment and the Distributed Topology</h2>
+
+        <p>Rank assignment is the bridge between "N independent machines" and "one logical distributed job." It
+            determines which GPU processes which shard of data and which slice of the model. Here's how the three-layer
+            rank taxonomy works:</p>
+
+        <table class="comparison-table">
+            <thead>
+                <tr>
+                    <th>Rank Type</th>
+                    <th>Scope</th>
+                    <th>Range (20 nodes &times; 8 GPUs)</th>
+                    <th>Set By</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><code>NODE_RANK</code></td>
+                    <td>Which machine</td>
+                    <td>0&ndash;19</td>
+                    <td><span class="badge badge-warn">Our team</span></td>
+                </tr>
+                <tr>
+                    <td><code>LOCAL_RANK</code></td>
+                    <td>Which GPU on that machine</td>
+                    <td>0&ndash;7</td>
+                    <td><span class="badge badge-good">torchrun</span></td>
+                </tr>
+                <tr>
+                    <td><code>RANK</code> (global)</td>
+                    <td>Unique ID across all GPUs</td>
+                    <td>0&ndash;159</td>
+                    <td><span class="badge badge-good">torchrun</span></td>
+                </tr>
+                <tr>
+                    <td><code>WORLD_SIZE</code></td>
+                    <td>Total GPU count</td>
+                    <td>160</td>
+                    <td><span class="badge badge-good">torchrun</span></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>The key insight: <code>torchrun</code> handles local rank assignment and calculates global ranks
+            automatically &mdash; but <em>you</em> must tell it the global topology by translating AWS Batch's
+            environment variables:</p>
+
+        <pre>
+<span class="code-comment"># We set these by reading AWS Batch env vars</span>
+<span class="code-keyword">export</span> <span class="code-variable">FORCE_TORCHRUN</span>=<span class="code-string">1</span>
+<span class="code-keyword">export</span> <span class="code-variable">NNODES</span>=${AWS_BATCH_JOB_NUM_NODES}         <span class="code-comment"># &larr; from Batch</span>
+<span class="code-keyword">export</span> <span class="code-variable">NODE_RANK</span>=${AWS_BATCH_JOB_NODE_INDEX}      <span class="code-comment"># &larr; from Batch</span>
+<span class="code-keyword">export</span> <span class="code-variable">MASTER_ADDR</span>=...                            <span class="code-comment"># &larr; resolved by us</span>
+<span class="code-keyword">export</span> <span class="code-variable">MASTER_PORT</span>=<span class="code-string">29500</span>                          <span class="code-comment"># &larr; chosen by us</span>
+
+<span class="code-comment"># torchrun then AUTOMATICALLY sets per-process:</span>
+<span class="code-comment"># LOCAL_RANK, RANK (global), WORLD_SIZE</span>
+</pre>
+
+        <p>We also configure generous rendezvous timeouts. With 20 nodes that may take
+            varying amounts of time to
+            download models and prepare data, the default timeouts are too aggressive:</p>
+
+        <pre>
+<span class="code-comment"># AWS Batch does NOT set these &mdash; without them, large jobs timeout</span>
+<span class="code-keyword">export</span> <span class="code-variable">RDZV_CONF</span>=<span class="code-string">"last_call_timeout=60,join_timeout=10800,close_timeout=10800,timeout=10800"</span>
+</pre>
+
+        <p>The 3-hour (<code>10800s</code>) join timeout may seem excessive, but it accounts for the worst case: a node
+            that downloads a large model from S3 while others have already finished. Without this, <code>torchrun</code>
+            will kill the rendezvous and you'll see timeout errors that look like networking problems but are actually
+            just sequencing problems. In practice, model downloads on P5 instances with S3 complete in minutes, not
+            hours &mdash; so this timeout is a safety margin against cold-start variance, not a license for nodes to
+            silently stall for 3 hours while burning GPU-time on the rest of the cluster.</p>
+
+        <hr class="section-divider">
+
+        <!-- ===== SECTION 6: NCCL INIT ===== -->
+        <h2>NCCL Initialization: The Handshake That Makes It All Work</h2>
+
+        <p>NCCL initialization is the moment when the cluster transitions from "N processes that know about each other"
+            to "N processes that can do collective communication." It's also the most common failure point. AWS Batch
+            has no knowledge of NCCL and provides zero configuration for it &mdash; every variable here is set by
+            us.</p>
+
+        <p>The initialization happens in two phases:</p>
+
+        <div class="callout">
+            <strong>Phase 1: Gloo Rendezvous</strong> (TCP, lightweight) &mdash; All processes connect to the master
+            node's <code>MASTER_ADDR:MASTER_PORT</code> using the Gloo backend. This is a simple TCP handshake that
+            establishes the process group topology. <code>GLOO_SOCKET_IFNAME=ens,eth0</code> tells Gloo which NIC to
+            use.<br><br>
+            <strong>Phase 2: NCCL Communicator Creation</strong> (EFA, GPU-aware) &mdash; NCCL creates its own
+            communication channels using the EFA provider, probing the GPU topology, selecting optimal ring/tree
+            algorithms, and testing bandwidth between all pairs of nodes.
+        </div>
+
+        <p>The environment variables that govern this phase are critical:</p>
+
+        <pre>
+<span class="code-comment"># Fail fast on async NCCL errors instead of hanging</span>
+<span class="code-keyword">export</span> <span class="code-variable">TORCH_NCCL_ASYNC_ERROR_HANDLING</span>=<span class="code-string">1</span>
+
+<span class="code-comment"># Enable PXN for multi-NIC topologies on P5</span>
+<span class="code-keyword">export</span> <span class="code-variable">NCCL_PXN_DISABLE</span>=<span class="code-string">0</span>
+
+<span class="code-comment"># CRITICAL: Allow EFA to pin sufficient memory for RDMA buffers</span>
+<span class="code-function">ulimit</span> -l unlimited
+
+<span class="code-comment"># Mitigate CUDA OOM from memory fragmentation</span>
+<span class="code-keyword">export</span> <span class="code-variable">PYTORCH_CUDA_ALLOC_CONF</span>=<span class="code-string">expandable_segments:True</span>
+</pre>
+
+        <p>The <code>ulimit -l unlimited</code> call is frequently missed. EFA needs to pin large memory regions for
+            RDMA buffers. If the memlock limit is too low, you'll see cryptic <code>ib_mr_reg_lsmr</code> errors during
+            NCCL init. This is set in entrypoint script, not the Dockerfile, because
+            <code>ulimit</code> must be
+            applied at runtime.
+        </p>
+
+        <hr class="section-divider">
+
+        <!-- ===== SECTION 7: SYNC BARRIER ===== -->
+        <h2>The Synchronization Barrier: Making Sure Everyone's Ready</h2>
+
+        <p>In theory, AWS Batch launches all 20 containers at the same time. In practice, startup times vary by minutes
+            &mdash; some nodes are still downloading the base model from S3 when others are ready to train. Without a
+            barrier, fast nodes will start <code>torchrun</code>, which begins the rendezvous countdown. If slow nodes
+            don't join before the timeout, the entire job fails with errors that look like networking problems.</p>
+
+        <p>AWS Batch provides no synchronization primitive &mdash; no barrier, no readiness signal, no health check.
+            We built our own using the simplest possible tool: a <code>netcat</code> TCP
+            probe.</p>
+
+        <pre>
+<span class="code-comment"># From run_training_pipeline.sh</span>
+<span class="code-comment"># Workers wait until the main node's torchrun port is reachable</span>
+<span class="code-keyword">if</span> [ <span class="code-string">"${AWS_BATCH_JOB_NODE_INDEX}"</span> != <span class="code-string">"${AWS_BATCH_JOB_MAIN_NODE_INDEX}"</span> ]; <span class="code-keyword">then</span>
+    <span class="code-keyword">echo</span> <span class="code-string">"WORKER NODE (Rank ${NODE_RANK}). Waiting for main node..."</span>
+    <span class="code-keyword">while</span> ! <span class="code-function">nc</span> -z -w 10 ${MASTER_ADDR} ${MASTER_PORT}; <span class="code-keyword">do</span>
+        <span class="code-keyword">echo</span> <span class="code-string">"Main node not yet reachable. Retrying in 15 seconds..."</span>
+        <span class="code-function">sleep</span> 15
+    <span class="code-keyword">done</span>
+    <span class="code-keyword">echo</span> <span class="code-string">"Main node is ready. Proceeding to training."</span>
+<span class="code-keyword">fi</span>
+</pre>
+
+        <p>This is six lines of bash, but it solved what was operationally the most difficult problem. The barrier works
+            because <code>torchrun</code> on the main node opens <code>MASTER_PORT</code> when it's ready for
+            rendezvous. Workers probe that port in a loop. Once reachable, they know the main node is ready and proceed
+            to launch their own <code>torchrun</code> process.</p>
+
+        <p>Note that <code>netcat-openbsd</code> is a deliberate dependency in the <code>Dockerfile</code>. It's the
+            simplest tool that solves the problem &mdash; no Python, no library, no daemon. Alternatives include
+            S3-based barriers (each node writes a sentinel file, leader polls for all), Redis, or etcd. For this scale
+            (20 nodes), the TCP probe is sufficient and has zero infrastructure dependencies.</p>
+
+        <hr class="section-divider">
+
+        <!-- ===== SECTION 8: DEBUGGING ===== -->
+        <h2>What Can Go Wrong: A Field Guide to Cluster Debugging</h2>
+
+        <p>The most important thing to know about GPU cluster debugging: <strong>failures almost always present as
+                hangs, not errors.</strong> The job will sit there consuming GPU-hours while 20 nodes silently wait for
+            a TCP connection, an NCCL communicator, or a rendezvous response that will never come. The table below
+            documents every failure we encountered, what it looked like, and how to fix
+            it.</p>
+
+        <table class="comparison-table">
+            <thead>
+                <tr>
+                    <th>Failure</th>
+                    <th>Symptom</th>
+                    <th>Fix</th>
+                    <th>Owner</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td>Wrong <code>NCCL_SOCKET_IFNAME</code></td>
+                    <td>NCCL tries wrong NIC, hangs</td>
+                    <td>Check <code>ip addr</code> on instances</td>
+                    <td><span class="badge badge-neutral">Script</span></td>
+                </tr>
+                <tr>
+                    <td><code>ulimit -l</code> too low</td>
+                    <td><code>ib_mr_reg_lsmr</code> error</td>
+                    <td><code>ulimit -l unlimited</code></td>
+                    <td><span class="badge badge-neutral">Script</span></td>
+                </tr>
+                <tr>
+                    <td>Port conflict on 29500</td>
+                    <td>torchrun fails to bind</td>
+                    <td>Clean zombie processes or use different port</td>
+                    <td><span class="badge badge-neutral">Script</span></td>
+                </tr>
+                <tr>
+                    <td><code>FI_PROVIDER</code> not <code>efa</code></td>
+                    <td>Falls back to TCP, 10&times; slower</td>
+                    <td><code>export FI_PROVIDER=efa</code></td>
+                    <td><span class="badge badge-neutral">Script</span></td>
+                </tr>
+                <tr>
+                    <td>Mismatched <code>NNODES</code></td>
+                    <td>Rendezvous hangs or errors</td>
+                    <td>Verify <code>AWS_BATCH_JOB_NUM_NODES</code></td>
+                    <td><span class="badge badge-neutral">Script</span></td>
+                </tr>
+                <tr>
+                    <td>GDRCopy errors</td>
+                    <td>NCCL init fails with gdrcopy trace</td>
+                    <td><code>FI_EFA_GDR_READ_ENABLE=0</code></td>
+                    <td><span class="badge badge-neutral">Script</span></td>
+                </tr>
+                <tr>
+                    <td>Memory fragmentation</td>
+                    <td>CUDA OOM despite free memory</td>
+                    <td><code>PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True</code></td>
+                    <td><span class="badge badge-neutral">Script</span></td>
+                </tr>
+                <tr>
+                    <td>Missing <code>netcat</code></td>
+                    <td>Sync barrier errors or skipped</td>
+                    <td>Add <code>netcat-openbsd</code> to Dockerfile</td>
+                    <td><span class="badge badge-neutral">Dockerfile</span></td>
+                </tr>
+            </tbody>
+        </table>
+
+        <div class="callout warning">
+            <strong>The Golden Debugging Sequence</strong><br><br>
+            When your distributed training job hangs, check these five things in order:
+            <ul>
+                <li><strong>1. Interface names</strong> &mdash; Run <code>ip addr</code> on a node. Does
+                    <code>NCCL_SOCKET_IFNAME</code> match the actual interface?
+                </li>
+                <li><strong>2. <code>NCCL_DEBUG=INFO</code></strong> &mdash; Set this and re-run. The verbose logs will
+                    show exactly where NCCL is stuck (NIC selection? topology probing? communicator creation?)</li>
+                <li><strong>3. <code>ulimit -l</code></strong> &mdash; Run <code>ulimit -l</code> inside the container.
+                    If it's not <code>unlimited</code>, EFA can't pin RDMA buffers.</li>
+                <li><strong>4. <code>FI_PROVIDER</code></strong> &mdash; Echo <code>$FI_PROVIDER</code>. If it's empty
+                    or not <code>efa</code>, NCCL isn't using EFA at all.</li>
+            </ul>
+        </div>
+
+        <hr class="section-divider">
+
+        <!-- ===== SECTION 9: FIRST STEP ===== -->
+        <h2>The First Successful Step: Putting It All Together</h2>
+
+        <p>With all the infrastructure in place, here's what happens when <code>run_training_pipeline.sh</code> executes
+            end-to-end:</p>
+
+        <!-- Diagram: Cluster boot sequence -->
+        <figure style="margin: 32px 0; text-align: center;">
+            <svg viewBox="0 0 680 560" xmlns="http://www.w3.org/2000/svg"
+                style="max-width:100%; font-family:'Inter',sans-serif; display:block; margin:0 auto;">
+                <!-- Legend -->
+                <rect x="20" y="10" width="14" height="14" rx="3" fill="#2563EB" />
+                <text x="40" y="22" font-size="12" fill="#4a5568">AWS Batch (automatic)</text>
+                <rect x="200" y="10" width="14" height="14" rx="3" fill="#f59e0b" />
+                <text x="220" y="22" font-size="12" fill="#4a5568">Our script (manual)</text>
+                <rect x="370" y="10" width="14" height="14" rx="3" fill="#16a34a" />
+                <text x="390" y="22" font-size="12" fill="#4a5568">PyTorch / NCCL (framework)</text>
+
+                <!-- Step 1 -->
+                <rect x="140" y="45" width="400" height="52" rx="10" fill="#dbeafe" stroke="#2563EB" stroke-width="2" />
+                <text x="340" y="66" text-anchor="middle" font-size="13" font-weight="700" fill="#1e40af">① AWS Batch
+                    launches 20 containers</text>
+                <text x="340" y="85" text-anchor="middle" font-size="11" fill="#1e40af">EFA attached · IAM injected ·
+                    AWS_BATCH_JOB_* set</text>
+
+                <!-- Arrow 1→2 -->
+                <line x1="340" y1="97" x2="340" y2="117" stroke="#94a3b8" stroke-width="2" />
+                <polygon points="340,120 334,110 346,110" fill="#94a3b8" />
+
+                <!-- Step 2 -->
+                <rect x="140" y="120" width="400" height="52" rx="10" fill="#fef3c7" stroke="#f59e0b"
+                    stroke-width="2" />
+                <text x="340" y="141" text-anchor="middle" font-size="13" font-weight="700" fill="#92400e">② EFA &amp;
+                    NCCL env vars configured</text>
+                <text x="340" y="160" text-anchor="middle" font-size="11" fill="#92400e">FI_PROVIDER=efa ·
+                    NCCL_PROTO=LL128 · ulimit -l unlimited · …</text>
+
+                <!-- Arrow 2→3 -->
+                <line x1="340" y1="172" x2="340" y2="192" stroke="#94a3b8" stroke-width="2" />
+                <polygon points="340,195 334,185 346,185" fill="#94a3b8" />
+
+                <!-- Step 3 -->
+                <rect x="140" y="195" width="400" height="52" rx="10" fill="#fef3c7" stroke="#f59e0b"
+                    stroke-width="2" />
+                <text x="340" y="216" text-anchor="middle" font-size="13" font-weight="700" fill="#92400e">③ Node
+                    identity resolved</text>
+                <text x="340" y="235" text-anchor="middle" font-size="11" fill="#92400e">AWS_BATCH_JOB_NODE_INDEX →
+                    NODE_RANK · MASTER_ADDR</text>
+
+                <!-- Arrow 3→4 -->
+                <line x1="340" y1="247" x2="340" y2="267" stroke="#94a3b8" stroke-width="2" />
+                <polygon points="340,270 334,260 346,260" fill="#94a3b8" />
+
+                <!-- Step 4 -->
+                <rect x="140" y="270" width="400" height="52" rx="10" fill="#fef3c7" stroke="#f59e0b"
+                    stroke-width="2" />
+                <text x="340" y="291" text-anchor="middle" font-size="13" font-weight="700" fill="#92400e">④ Model
+                    download + nc -z sync barrier</text>
+                <text x="340" y="310" text-anchor="middle" font-size="11" fill="#92400e">Workers poll MASTER_ADDR:29500
+                    until main node is ready</text>
+
+                <!-- Arrow 4→5 -->
+                <line x1="340" y1="322" x2="340" y2="342" stroke="#94a3b8" stroke-width="2" />
+                <polygon points="340,345 334,335 346,335" fill="#94a3b8" />
+
+                <!-- Step 5 -->
+                <rect x="140" y="345" width="400" height="52" rx="10" fill="#dcfce7" stroke="#16a34a"
+                    stroke-width="2" />
+                <text x="340" y="366" text-anchor="middle" font-size="13" font-weight="700" fill="#166534">⑤ torchrun
+                    rendezvous (Gloo / TCP)</text>
+                <text x="340" y="385" text-anchor="middle" font-size="11" fill="#166534">All 20 nodes join ·
+                    WORLD_SIZE=160 · ranks assigned</text>
+
+                <!-- Arrow 5→6 -->
+                <line x1="340" y1="397" x2="340" y2="417" stroke="#94a3b8" stroke-width="2" />
+                <polygon points="340,420 334,410 346,410" fill="#94a3b8" />
+
+                <!-- Step 6 -->
+                <rect x="140" y="420" width="400" height="52" rx="10" fill="#dcfce7" stroke="#16a34a"
+                    stroke-width="2" />
+                <text x="340" y="441" text-anchor="middle" font-size="13" font-weight="700" fill="#166534">⑥ NCCL
+                    communicator init (EFA)</text>
+                <text x="340" y="460" text-anchor="middle" font-size="11" fill="#166534">GPU topology probed · ring/tree
+                    algorithms selected</text>
+
+                <!-- Arrow 6→7 -->
+                <line x1="340" y1="472" x2="340" y2="492" stroke="#94a3b8" stroke-width="2" />
+                <polygon points="340,495 334,485 346,485" fill="#94a3b8" />
+
+                <!-- Step 7 -->
+                <rect x="100" y="495" width="480" height="52" rx="10" fill="#1e40af" stroke="#1e3a8a"
+                    stroke-width="2" />
+                <text x="340" y="516" text-anchor="middle" font-size="13" font-weight="700" fill="white">⑦ First
+                    gradient: AllReduce across 160 GPUs via EFA</text>
+                <text x="340" y="535" text-anchor="middle" font-size="11" fill="#bfdbfe">loss.backward() → AllReduce →
+                    optimizer.step() → loss curve begins</text>
+            </svg>
+            <figcaption style="font-size:13px; color:#4a5568; margin-top:10px;">The cluster boot sequence. Blue = AWS
+                Batch provides automatically. Amber = configured by our scripts. Green = PyTorch/NCCL framework. Every
+                amber step is a potential silent failure point.</figcaption>
+        </figure>
+
+
+        <div class="numbered-insight">
+            <div class="insight-number">1</div>
+            <div class="insight-content">
+                <strong>AWS Batch launches 20 containers</strong>
+                <p>Each gets EFA interfaces, IAM credentials, and identity env vars (<code>AWS_BATCH_JOB_*</code>). The
+                    container image is pulled from ECR.</p>
+            </div>
+        </div>
+
+        <div class="numbered-insight">
+            <div class="insight-number">2</div>
+            <div class="insight-content">
+                <strong>Our script configures 20+ environment variables</strong>
+                <p>EFA/NCCL settings, master address resolution, rank assignment, rendezvous timeouts,
+                    <code>ulimit</code> adjustments. None of this comes from Batch.
+                </p>
+            </div>
+        </div>
+
+        <div class="numbered-insight">
+            <div class="insight-number">3</div>
+            <div class="insight-content">
+                <strong>Each node downloads the base model</strong>
+                <p>Extracted to local NVMe under <code>/tmp/instance_storage/</code>. Download times vary across nodes.
+                </p>
+            </div>
+        </div>
+
+        <div class="numbered-insight">
+            <div class="insight-number">4</div>
+            <div class="insight-content">
+                <strong>The synchronization barrier fires</strong>
+                <p>Worker nodes loop on <code>nc -z</code> until the main node's torchrun port is reachable. Fast nodes
+                    wait; slow nodes catch up.</p>
+            </div>
+        </div>
+
+        <div class="numbered-insight">
+            <div class="insight-number">5</div>
+            <div class="insight-content">
+                <strong><code>llamafactory-cli train</code> launches</strong>
+                <p><code>FORCE_TORCHRUN=1</code> tells LLaMA-Factory to invoke <code>torchrun</code> internally. Gloo
+                    rendezvous completes, NCCL communicators are created, and 160 processes form a single distributed
+                    process group.</p>
+            </div>
+        </div>
+
+        <div class="numbered-insight">
+            <div class="insight-number">6</div>
+            <div class="insight-content">
+                <strong>The first gradient flows</strong>
+                <p>Forward pass, loss computation, <code>loss.backward()</code>, AllReduce across 160 GPUs via EFA. MDS
+                    starts streaming tokenized data from S3 as described in <a
+                        href="https://krish-mahajan.github.io/blog/streaming-architecture/">Part
+                        1</a>. The loss curve begins.</p>
+            </div>
+        </div>
+
+        <hr class="section-divider">
+
+        <!-- ===== SECTION 10: KEY TAKEAWAYS ===== -->
+        <h2>Key Takeaways</h2>
+
+        <p>Building a multi-node GPU training cluster is an exercise in managing invisible dependencies. The hardware,
+            networking, and orchestration must all be correct before a single line of PyTorch code executes &mdash; and
+            most misconfiguration manifests as silence, not errors.</p>
+
+        <p>The single most important insight from this work: <strong>the gap between "AWS gives you GPUs" and "training
+                actually starts" is larger than most people expect.</strong> Here's the ownership breakdown:</p>
+
+        <table class="ownership-table">
+            <thead>
+                <tr>
+                    <th>AWS Batch Handles</th>
+                    <th>Our Configuration</th>
+                </tr>
+            </thead>
+            <tbody>
+                <tr>
+                    <td><span class="checkmark">&#10003;</span> Instance provisioning &amp; lifecycle</td>
+                    <td>Container image (base, CUDA, flash-attn, LLaMA-Factory, system deps)</td>
+                </tr>
+                <tr>
+                    <td><span class="checkmark">&#10003;</span> EFA interface attachment</td>
+                    <td>Container image (base, CUDA, flash-attn, LLaMA-Factory, system deps)</td>
+                </tr>
+                <tr>
+                    <td><span class="checkmark">&#10003;</span> Container image pull from ECR</td>
+                    <td>All EFA/NCCL env vars (<code>FI_PROVIDER</code>, <code>NCCL_PROTO</code>, etc.)</td>
+                </tr>
+                <tr>
+                    <td><span class="checkmark">&#10003;</span> Node identity env vars (<code>AWS_BATCH_JOB_*</code>)
+                    </td>
+                    <td>Master address resolution from Batch env vars</td>
+                </tr>
+                <tr>
+                    <td><span class="checkmark">&#10003;</span> IAM credential injection</td>
+                    <td>Synchronization barrier (<code>nc -z</code> probe loop)</td>
+                </tr>
+                <tr>
+                    <td></td>
+                    <td><code>ulimit -l unlimited</code>, rendezvous timeouts</td>
+                </tr>
+                <tr>
+                    <td></td>
+                    <td><code>PYTORCH_CUDA_ALLOC_CONF</code>, torchrun log level</td>
+                </tr>
+            </tbody>
+        </table>
+
+        <p>With the cluster operational, the data plane takes over &mdash; MDS starts streaming tokenized shards from
+            S3, each GPU processes its deterministic subset, and the loss curve begins its descent. That machinery is
+            described in <a href="https://krish-mahajan.github.io/blog/streaming-architecture/">Part 1</a>. Together,
+            the two posts cover the full
+            stack: from hardware provisioning to the start of the learning phase.</p>
+
+        <hr class="section-divider">
+
+        <!-- ===== REFERENCES ===== -->
+        <h2>Further Reading &amp; References</h2>
+
+        <div class="references">
+            <p><strong>AWS EFA &amp; Networking</strong></p>
+            <ul>
+                <li><a href="https://docs.aws.amazon.com/AWSEC2/latest/UserGuide/efa.html">AWS EFA Documentation</a>
+                    &mdash; Official guide to Elastic Fabric Adapter</li>
+                <li><a href="https://docs.aws.amazon.com/batch/latest/userguide/multi-node-parallel-jobs.html">AWS Batch
+                        Multi-Node Jobs</a> &mdash; Environment variables and job configuration</li>
+            </ul>
+
+            <p><strong>Orchestration</strong></p>
+            <ul>
+                <li><a href="https://docs.aws.amazon.com/batch/latest/userguide/what-is-batch.html">AWS Batch</a>
+                    &mdash; Fully managed batch computing at any scale</li>
+                <li><a href="https://aws.amazon.com/sagemaker/ai/train/">Amazon SageMaker Training</a>
+                    &mdash; Managed training jobs on AWS infrastructure</li>
+                <li><a href="https://docs.ray.io/en/latest/train/train.html">Ray Train</a>
+                    &mdash; Distributed training library built on Ray</li>
+            </ul>
+
+            <p><strong>NCCL &amp; Distributed Training</strong></p>
+            <ul>
+                <li><a href="https://docs.nvidia.com/deeplearning/nccl/user-guide/docs/env.html">NCCL Environment
+                        Variables</a> &mdash; Complete reference for all tuning knobs</li>
+                <li><a href="https://pytorch.org/docs/stable/distributed.html">PyTorch Distributed</a> &mdash;
+                    torch.distributed and torchrun documentation</li>
+                <li><a href="https://pytorch.org/docs/stable/elastic/run.html">torchrun (Elastic Launch)</a> &mdash;
+                    Rendezvous and fault tolerance</li>
+            </ul>
+
+            <p><strong>Related Posts</strong></p>
+            <ul>
+                <li><a href="https://krish-mahajan.github.io/blog/streaming-architecture/">Part 1: Streaming 20 TB to
+                        160 GPUs</a> &mdash; The data
+                    plane architecture</li>
+            </ul>
+        </div>
+
+        <!-- Tags -->
+        <div class="tag-list">
+            <span class="tag-pill">GPU Clusters</span>
+            <span class="tag-pill">Distributed Training</span>
+            <span class="tag-pill">AWS EFA</span>
+            <span class="tag-pill">NCCL</span>
+            <span class="tag-pill">AWS Batch</span>
+            <span class="tag-pill">Infrastructure</span>
+            <span class="tag-pill">H100</span>
+            <span class="tag-pill">PyTorch</span>
+            <span class="tag-pill">torchrun</span>
+            <span class="tag-pill">MLOps</span>
+        </div>
+
+    </article>
+</body>
+
+</html>
