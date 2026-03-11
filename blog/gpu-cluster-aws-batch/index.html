@@ -1383,7 +1383,40 @@
 
         <hr class="section-divider">
 
-        <!-- ===== SECTION 10: KEY TAKEAWAYS ===== -->
+        <!-- ===== SECTION 10: FINAL TORCHRUN COMMAND ===== -->
+        <h2>The Final <code>torchrun</code> Command</h2>
+
+        <p>Every variable set in the previous sections converges into a single call inside LLaMA-Factory's
+            <code>cli.py</code>. When <code>FORCE_TORCHRUN=1</code> is set, <code>llamafactory-cli train</code>
+            skips its single-GPU path and constructs a <code>torchrun</code> command from the environment:
+        </p>
+
+        <pre>
+<span class="code-comment"># Inside llamafactory/cli.py — runs when FORCE_TORCHRUN=1</span>
+<span class="code-keyword">torchrun</span> \
+  --nnodes     <span class="code-variable">${NNODES}</span>            <span class="code-comment"># &larr; from AWS_BATCH_JOB_NUM_NODES</span>
+  --nproc_per_node <span class="code-variable">${NPROC_PER_NODE}</span>  <span class="code-comment"># &larr; 8 (one per H100)</span>
+  --rdzv_backend c10d
+  --rdzv_endpoint <span class="code-variable">${MASTER_ADDR}</span>:<span class="code-variable">${MASTER_PORT}</span>
+  --rdzv_conf  <span class="code-variable">'${RDZV_CONF}'</span>        <span class="code-comment"># &larr; 3hr join/close timeouts</span>
+  --node_rank  <span class="code-variable">${NODE_RANK}</span>           <span class="code-comment"># &larr; from AWS_BATCH_JOB_NODE_INDEX</span>
+  launcher.py  <span class="code-variable">[training args]</span>
+</pre>
+
+        <div class="callout">
+            <strong>One subtlety worth noting:</strong> <code>cli.py</code> also injects a final set of EFA/libfabric
+            variables (<code>FI_PROVIDER=efa</code>, <code>FI_EFA_RX_CQ_SIZE=8192</code>) directly into the
+            <code>torchrun</code> subprocess environment, on top of what the shell script already exported. This
+            double-setting is intentional &mdash; it guarantees EFA is active even if the outer env is somehow
+            dropped during the subprocess fork under <code>/bin/bash -lc</code>.
+        </div>
+
+        <hr class="section-divider">
+
+
+
+
+        <!-- ===== SECTION 11: KEY TAKEAWAYS ===== -->
         <h2>Key Takeaways</h2>
 
         <p>Building a multi-node GPU training cluster is an exercise in managing invisible dependencies. The hardware,
